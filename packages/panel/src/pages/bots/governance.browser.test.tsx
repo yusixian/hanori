@@ -7,6 +7,16 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { i18n } from "@/i18n";
 import { BotGovernancePage } from "./governance";
 
+function stubFetch(fetchMock: typeof fetch) {
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).includes("/api/image-mcp-platform")
+      ? Promise.resolve(
+          new Response(JSON.stringify({ ok: true, data: { baseUrl: "", revision: 0 } })),
+        )
+      : fetchMock(input, init),
+  );
+}
+
 const loadedDraft = {
   timezone: "UTC",
   connection: { status: "connected", scopes: ["mcp:pixai:generate"] },
@@ -63,6 +73,57 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test("applies the shared platform without discarding unsaved governance fields", async () => {
+  let configured = false;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/api/image-mcp-platform")) {
+      if (init?.method === "PUT") configured = true;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          data: {
+            baseUrl: configured ? "https://mcp.example.com" : "",
+            revision: configured ? 1 : 0,
+          },
+        }),
+      );
+    }
+    if (String(input).includes("/governance/subjects"))
+      return new Response(JSON.stringify({ ok: true, subjects: [] }));
+    const status = {
+      status: "disconnected",
+      scopes: [],
+      ...(configured ? {} : { lastError: "NOT_CONFIGURED" }),
+    };
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        data: { ...loadedDraft, connections: { mcp_openai: status, mcp_gemini: status } },
+      }),
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+      <Routes>
+        <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  await expect.element(page.getByLabelText("Platform address")).toBeEnabled();
+  await expect
+    .element(page.getByRole("button", { name: "Connect MCP", exact: true }).first())
+    .toBeDisabled();
+  await page.getByLabelText("Budget timezone").fill("Europe/Paris");
+  await page.getByLabelText("Platform address").fill("mcp.example.com");
+  await page.getByRole("button", { name: "Save platform address" }).click();
+  await expect
+    .element(page.getByRole("button", { name: "Connect MCP", exact: true }).first())
+    .toBeEnabled();
+  await expect.element(page.getByLabelText("Budget timezone")).toHaveValue("Europe/Paris");
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
+});
+
 test("resets the complete governance draft to the raised defaults before saving", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input).includes("/governance/subjects")) {
@@ -74,7 +135,7 @@ test("resets the complete governance draft to the raised defaults before saving"
         : loadedDraft;
     return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
 
   render(
     <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
@@ -106,7 +167,7 @@ test("resets the complete governance draft to the raised defaults before saving"
   await expect.element(page.getByLabelText("Image · user across groups daily")).toHaveValue(300);
   await expect.element(page.getByLabelText("Image · group total daily")).toHaveValue(1_000);
   await expect.element(page.getByText("No exact overrides are configured.")).toBeVisible();
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
   const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
   expect(body).toMatchObject({
@@ -132,7 +193,7 @@ test("adds a private-chat image user and includes it in the saved governance con
         : loadedDraft;
     return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
 
   render(
     <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
@@ -148,7 +209,7 @@ test("adds a private-chat image user and includes it in the saved governance con
   await expect.element(page.getByLabelText("Telegram user ID")).toHaveValue(73);
   await page.getByRole("button", { name: "Add user" }).click();
   await page.getByLabelText("Telegram user ID").nth(1).fill("4242");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
 
   const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
   const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
@@ -173,7 +234,7 @@ test("selects a recognized group instead of requiring a raw chat ID", async () =
         : draft;
     return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
 
   render(
     <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
@@ -187,7 +248,7 @@ test("selects a recognized group instead of requiring a raw chat ID", async () =
   await page.getByRole("button", { name: "Add override" }).click();
   await page.getByRole("combobox", { name: "Group" }).click();
   await page.getByRole("option", { name: /Acceptance Art Group/ }).click();
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
 
   const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
   const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
@@ -228,7 +289,7 @@ test.each([
           : draft;
       return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
 
     render(
       <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
@@ -245,7 +306,7 @@ test.each([
     }
     await page.getByRole("combobox", { name: "Person" }).click();
     await page.getByRole("option", { name: /Acceptance Artist/ }).click();
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
 
     const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
     const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
@@ -266,7 +327,7 @@ test("blocks a positive user ID selected as a group with an actionable error", a
     }
     return new Response(JSON.stringify({ ok: true, data: draft }), { status: 200 });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
 
   render(
     <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
@@ -279,7 +340,7 @@ test("blocks a positive user ID selected as a group with an actionable error", a
   await expect
     .element(page.getByRole("combobox", { name: "Group" }))
     .toHaveTextContent("Unknown group (ID 3522396394)");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent("does not match the selected target type");
@@ -309,7 +370,7 @@ test("resolves saved group and person IDs to recognized names", async () => {
     }
     return new Response(JSON.stringify({ ok: true, data: loadedDraft }), { status: 200 });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
 
   render(
     <StrictMode>
@@ -353,7 +414,7 @@ test("refresh resolves saved IDs again instead of keeping stale names", async ()
     }
     return new Response(JSON.stringify({ ok: true, data: loadedDraft }), { status: 200 });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
 
   render(
     <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
@@ -384,7 +445,7 @@ test("blocks duplicate resource and target overrides before sending the update",
     }
     return new Response(JSON.stringify({ ok: true, data: draft }), { status: 200 });
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
 
   render(
     <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
@@ -394,8 +455,8 @@ test("blocks duplicate resource and target overrides before sending the update",
     </MemoryRouter>,
   );
 
-  await expect.element(page.getByRole("button", { name: "Save" })).toBeVisible();
-  await page.getByRole("button", { name: "Save" }).click();
+  await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent("already has an override for this target");
@@ -425,7 +486,7 @@ for (const [width, height] of [
           { status: 200 },
         ),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
     render(
       <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
         <Routes>

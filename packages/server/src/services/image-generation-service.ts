@@ -26,6 +26,7 @@ import {
   type ImageGovernanceConfig,
   type ImagePreset,
   type ImageProviderRoute,
+  type ImagePurpose,
   parseImageDynamicParameters,
   type ImageRouteCapabilities,
   type ImageRouteConfig,
@@ -285,13 +286,14 @@ export class ImageGenerationService implements ImageGenerationPort {
 
   private backend(provider: string, metadata?: Record<string, unknown> | null) {
     const selected =
-      provider === "mcp_pixai"
+      this.backends[provider as ImageProviderRoute] ??
+      (provider === "mcp_pixai"
         ? {
             adapter: this.pixai,
             artifacts: this.artifacts,
             endpoint: this.backends.mcp_pixai?.endpoint,
           }
-        : this.backends[provider as ImageProviderRoute];
+        : undefined);
     if (
       !selected ||
       (typeof metadata?.endpoint === "string" && metadata.endpoint !== selected.endpoint)
@@ -388,6 +390,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async createImpl(
     actor: ImageGenerationActor,
     request: CreateImageRequest,
+    confirmation?: GenerationRow,
   ): Promise<ImageGenerationAdmission> {
     const requestContext = {
       ...actor.requestContext,
@@ -405,6 +408,18 @@ export class ImageGenerationService implements ImageGenerationPort {
     if (!binding) return { accepted: false, reason: "provider_unavailable" };
     if (provider !== "general_backend" && !this.isMcpBackendAvailable(provider))
       return { accepted: false, reason: "provider_unavailable" };
+    let adapter: PixaiMcpAdapter | undefined;
+    if (provider !== "general_backend") {
+      try {
+        adapter = this.backend(provider, confirmation?.providerMetadata).adapter;
+      } catch {
+        return {
+          accepted: false,
+          reason: "provider_unavailable",
+          message: "原图片供应商连接不可用，请恢复连接后重试。",
+        };
+      }
+    }
     const nativeImages = provider === "mcp_openai" || provider === "mcp_gemini";
     const dynamic = (() => {
       try {
@@ -510,10 +525,12 @@ export class ImageGenerationService implements ImageGenerationPort {
       return { accepted: false, reason: "invalid_request", message: "Select an allowed preset" };
     }
 
+    const requiresConfirmation = actor.imageConfirmationPolicy !== "never";
+
     // A model may repeat create_image with a new tool call id or spell out a default.
     // Deduplicate the resolved provider inputs, including the compiled material prompt.
     const requestKey =
-      requestContext.messageId !== undefined
+      !confirmation && requestContext.messageId !== undefined
         ? `cos-tool-bot:${actor.botId}:${createHash("sha256")
             .update(
               JSON.stringify([
@@ -549,11 +566,14 @@ export class ImageGenerationService implements ImageGenerationPort {
         )
         .limit(1);
       if (existing && canAccess(actor, existing))
-        return { accepted: true, generation: toView(existing) };
+        return {
+          accepted: true,
+          generation: toView(existing, isPendingConfirmation(existing)),
+        };
     }
 
     let usageReservationId: string | undefined;
-    if (!actor.isBotAdmin) {
+    if (!actor.isBotAdmin && !requiresConfirmation) {
       const reservation = await this.usageGovernor.reserve({
         botId: actor.botId,
         resource: "image",
@@ -575,37 +595,75 @@ export class ImageGenerationService implements ImageGenerationPort {
       usageReservationId = reservation.reservationId;
     }
 
-    const id = randomUUID();
-    const idempotencyKey = requestKey ?? `cos-tool-bot:${actor.botId}:${id}`;
+    const id = confirmation?.id ?? randomUUID();
+    const idempotencyKey =
+      confirmation?.idempotencyKey ?? requestKey ?? `cos-tool-bot:${actor.botId}:${id}`;
+    const endpoint = this.backends[provider]?.endpoint;
+    const providerMetadata = { backendId: provider, ...(endpoint ? { endpoint } : {}) };
     const initialSnapshot: ImageGenerationRequestSnapshot = {
+      ...confirmation?.requestSnapshot,
+      ...(request.routingIntent ? { routingIntent: request.routingIntent } : {}),
       ...(presetKey ? { presetKey } : {}),
       ...dynamic.data,
       ...(dynamic.data.model ? { modelId: dynamic.data.model } : {}),
-      ...(Object.keys(requestContext).length ? { requestContext } : {}),
+      ...(confirmation?.requestSnapshot?.requestContext !== undefined ||
+      Object.keys(requestContext).length
+        ? {
+            requestContext: {
+              ...confirmation?.requestSnapshot?.requestContext,
+              ...requestContext,
+            },
+          }
+        : {}),
       ...(materialSnapshot ? { materials: materialSnapshot } : {}),
     };
     try {
-      await this.db.insert(imageGenerations).values({
-        id,
-        botId: actor.botId,
-        chatId: actor.chatId,
-        userId: actor.userId,
-        provider,
-        purpose: request.purpose,
-        presetKey,
-        idempotencyKey,
-        prompt,
-        negativePrompt: request.negativePrompt,
-        seed: request.seed,
-        requestSnapshot: initialSnapshot,
-        providerMetadata: {
-          backendId: provider,
-          ...(this.backends[provider]?.endpoint
-            ? { endpoint: this.backends[provider]!.endpoint }
-            : {}),
-        },
-        usageReservationId,
-      });
+      if (confirmation) {
+        const [claimed] = await this.db
+          .update(imageGenerations)
+          .set({
+            state: "preparing",
+            approvalState: "approved",
+            prompt,
+            seed: request.seed,
+            requestSnapshot: initialSnapshot,
+            usageReservationId,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(imageGenerations.id, id),
+              pendingConfirmationFilter(),
+              sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${confirmation.providerMetadata?.["confirmationVersion"] ?? 1}`,
+            ),
+          )
+          .returning({ id: imageGenerations.id });
+        if (!claimed) {
+          await this.refund(actor.botId, usageReservationId);
+          return {
+            accepted: false,
+            reason: "invalid_request",
+            message: "Image confirmation is no longer pending or has changed",
+          };
+        }
+      } else {
+        await this.db.insert(imageGenerations).values({
+          id,
+          botId: actor.botId,
+          chatId: actor.chatId,
+          userId: actor.userId,
+          provider,
+          purpose: request.purpose,
+          presetKey,
+          idempotencyKey,
+          prompt,
+          negativePrompt: request.negativePrompt,
+          seed: request.seed,
+          requestSnapshot: initialSnapshot,
+          providerMetadata,
+          usageReservationId,
+        });
+      }
     } catch {
       await this.refund(actor.botId, usageReservationId).catch(() => {});
       if (requestKey) {
@@ -620,23 +678,49 @@ export class ImageGenerationService implements ImageGenerationPort {
           )
           .limit(1);
         if (existing && canAccess(actor, existing))
-          return { accepted: true, generation: toView(existing) };
+          return {
+            accepted: true,
+            generation: toView(existing, isPendingConfirmation(existing)),
+          };
       }
       return { accepted: false, reason: "provider_unavailable" };
     }
-    await this.recordEvent(actor.botId, id, "created", "preparing", undefined, {
-      ...requestContext,
-      chatId: actor.chatId,
-    });
+    await this.recordEvent(
+      actor.botId,
+      id,
+      confirmation ? "state_changed" : "created",
+      "preparing",
+      undefined,
+      {
+        ...requestContext,
+        chatId: actor.chatId,
+      },
+    );
 
-    if (provider === "general_backend") {
+    if (requiresConfirmation) {
+      await this.db
+        .update(imageGenerations)
+        .set({
+          state: "awaiting_approval",
+          approvalState: "required",
+          providerMetadata: { ...providerMetadata, confirmationVersion: 1 },
+          updatedAt: new Date(),
+        })
+        .where(eq(imageGenerations.id, id));
+      await this.recordEvent(actor.botId, id, "state_changed", "awaiting_approval", undefined, {
+        confirmationRequired: true,
+      });
+      return { accepted: true, generation: (await this.getOwned(actor, id, true))! };
+    }
+
+    if (!adapter) {
       this.background(id, "general", () => this.runGeneral(id));
-      return { accepted: true, generation: (await this.getOwned(actor, id))! };
+      return { accepted: true, generation: (await this.getOwned(actor, id, !!confirmation))! };
     }
 
     let prepared;
     try {
-      prepared = await this.backend(provider).adapter.prepareGeneration({
+      prepared = await adapter.prepareGeneration({
         ...(presetKey ? { presetKey } : {}),
         ...dynamic.data,
         prompt,
@@ -653,7 +737,7 @@ export class ImageGenerationService implements ImageGenerationPort {
       return {
         accepted: false,
         reason: "provider_unavailable",
-        generation: (await this.getOwned(actor, id)) ?? undefined,
+        generation: (await this.getOwned(actor, id, !!confirmation)) ?? undefined,
       };
     }
     if (prepared.approvalRequired && !actor.isBotAdmin && !actor.isDelegatedGroupAdmin) {
@@ -662,7 +746,7 @@ export class ImageGenerationService implements ImageGenerationPort {
       return {
         accepted: false,
         reason: "approval_required",
-        generation: (await this.getOwned(actor, id)) ?? undefined,
+        generation: (await this.getOwned(actor, id, !!confirmation)) ?? undefined,
       };
     }
     try {
@@ -690,31 +774,281 @@ export class ImageGenerationService implements ImageGenerationPort {
       return {
         accepted: false,
         reason: "provider_unavailable",
-        generation: (await this.getOwned(actor, id).catch(() => null)) ?? undefined,
+        generation: (await this.getOwned(actor, id, !!confirmation).catch(() => null)) ?? undefined,
       };
     }
 
     try {
-      const operation = await this.backend(provider).adapter.startGeneration(
-        prepared.planId,
-        idempotencyKey,
-      );
+      const operation = await adapter.startGeneration(prepared.planId, idempotencyKey);
       await this.persistStartedOperation(id, prepared.planId, operation, actor.botId);
       this.background(id, "advance", () => this.advance(id));
-      return { accepted: true, generation: (await this.getOwned(actor, id))! };
+      return { accepted: true, generation: (await this.getOwned(actor, id, !!confirmation))! };
     } catch {
       // The provider may have accepted the idempotent start before the connection or
       // database failed. Keep the reservation and retry the same key during recovery.
       this.scheduleAdvance(id, 5_000);
-      return { accepted: true, generation: (await this.getOwned(actor, id))! };
+      return { accepted: true, generation: (await this.getOwned(actor, id, !!confirmation))! };
     }
   }
 
   async get(
     actor: ImageGenerationActor,
     generationId: string,
+    options?: { confirmationPreview?: boolean },
   ): Promise<ImageGenerationView | null> {
-    return this.getOwned(actor, generationId);
+    return this.getOwned(actor, generationId, options?.confirmationPreview);
+  }
+
+  confirm(
+    actor: ImageGenerationActor,
+    generationId: string,
+    expectedVersion = 1,
+  ): Promise<ImageGenerationAdmission> {
+    return this.execute(async () => {
+      const row = await this.getRow(generationId);
+      if (!row || !canAccess(actor, row)) return { accepted: false, reason: "not_allowed" };
+      if (!isPendingConfirmation(row)) {
+        return {
+          accepted: false,
+          reason: "invalid_request",
+          message: "Image confirmation is no longer pending",
+          generation: toView(row),
+        };
+      }
+      if ((row.providerMetadata?.["confirmationVersion"] ?? 1) !== expectedVersion) {
+        return {
+          accepted: false,
+          reason: "invalid_request",
+          message: "确认卡已更新，请核对最新参数后重新确认。",
+          generation: toView(row, true),
+        };
+      }
+      const snapshot = row.requestSnapshot ?? {};
+      const draftSeed =
+        typeof row.providerMetadata?.["confirmationDraftSeed"] === "number"
+          ? row.providerMetadata["confirmationDraftSeed"]
+          : row.seed;
+      const draftPrompt =
+        typeof row.providerMetadata?.["confirmationDraftPrompt"] === "string"
+          ? row.providerMetadata["confirmationDraftPrompt"]
+          : row.prompt;
+      const confirmedActor = { ...actor, imageConfirmationPolicy: "never" as const };
+      const parameters = Object.fromEntries(
+        Object.entries({
+          model: snapshot.modelId,
+          size: snapshot.size,
+          quality: snapshot.quality,
+          aspectRatio: snapshot.aspectRatio,
+          imageSize: snapshot.imageSize,
+        }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+      );
+      return this.createImpl(
+        {
+          ...confirmedActor,
+          ...(Object.keys(snapshot.requestContext ?? {}).length || actor.requestContext
+            ? {
+                requestContext: {
+                  ...snapshot.requestContext,
+                  ...actor.requestContext,
+                },
+              }
+            : {}),
+        },
+        {
+          purpose: row.purpose as ImagePurpose,
+          backendId: row.provider as ImageProviderRoute,
+          prompt: draftPrompt,
+          materials: { skipLibrary: true },
+          routingIntent: snapshot.routingIntent,
+          ...(row.presetKey ? { presetKey: row.presetKey } : {}),
+          ...(row.negativePrompt ? { negativePrompt: row.negativePrompt } : {}),
+          ...(draftSeed === null || draftSeed === undefined ? {} : { seed: draftSeed }),
+          ...(Object.keys(parameters).length ? { parameters } : {}),
+        },
+        row,
+      );
+    });
+  }
+
+  editConfirmation(
+    actor: ImageGenerationActor,
+    generationId: string,
+    patch: { seed: number },
+  ): Promise<ImageGenerationView | null> {
+    return this.execute(async () => {
+      const row = await this.getRow(generationId);
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return null;
+      if (!Number.isSafeInteger(patch.seed) || patch.seed < 0 || patch.seed > 4_294_967_295)
+        return null;
+      const version =
+        typeof row.providerMetadata?.["confirmationVersion"] === "number"
+          ? row.providerMetadata["confirmationVersion"] + 1
+          : 2;
+      const metadata = {
+        ...row.providerMetadata,
+        confirmationVersion: version,
+        confirmationDraftSeed: patch.seed,
+        confirmationState: "draft",
+      };
+      const [updated] = await this.db
+        .update(imageGenerations)
+        .set({ providerMetadata: metadata, updatedAt: new Date() })
+        .where(
+          and(
+            eq(imageGenerations.id, generationId),
+            pendingConfirmationFilter(),
+            sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${version - 1}`,
+          ),
+        )
+        .returning({ id: imageGenerations.id });
+      return updated ? this.getOwned(actor, generationId, true) : null;
+    });
+  }
+
+  discardConfirmationEdit(
+    actor: ImageGenerationActor,
+    generationId: string,
+  ): Promise<ImageGenerationView | null> {
+    return this.execute(async () => {
+      const row = await this.getRow(generationId);
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return null;
+      const version =
+        typeof row.providerMetadata?.["confirmationVersion"] === "number"
+          ? row.providerMetadata["confirmationVersion"] + 1
+          : 2;
+      const metadata: Record<string, unknown> = {
+        ...row.providerMetadata,
+        confirmationVersion: version,
+      };
+      delete metadata.confirmationDraftSeed;
+      delete metadata.confirmationDraftPrompt;
+      delete metadata.confirmationState;
+      const [updated] = await this.db
+        .update(imageGenerations)
+        .set({ providerMetadata: metadata, updatedAt: new Date() })
+        .where(
+          and(
+            eq(imageGenerations.id, generationId),
+            pendingConfirmationFilter(),
+            sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${version - 1}`,
+          ),
+        )
+        .returning({ id: imageGenerations.id });
+      return updated ? this.getOwned(actor, generationId, true) : null;
+    });
+  }
+
+  editConfirmationPrompt(
+    actor: ImageGenerationActor,
+    generationId: string,
+    prompt: string,
+  ): Promise<ImageGenerationView | null> {
+    return this.execute(async () => {
+      const row = await this.getRow(generationId);
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return null;
+      const value = prompt.trim();
+      if (!value || value.length > 8_000) return null;
+      const version =
+        typeof row.providerMetadata?.["confirmationVersion"] === "number"
+          ? row.providerMetadata["confirmationVersion"] + 1
+          : 2;
+      const metadata = {
+        ...row.providerMetadata,
+        confirmationVersion: version,
+        confirmationDraftPrompt: value,
+        confirmationState: "draft",
+      };
+      const [updated] = await this.db
+        .update(imageGenerations)
+        .set({ providerMetadata: metadata, updatedAt: new Date() })
+        .where(
+          and(
+            eq(imageGenerations.id, generationId),
+            pendingConfirmationFilter(),
+            sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${version - 1}`,
+          ),
+        )
+        .returning({ id: imageGenerations.id });
+      return updated ? this.getOwned(actor, generationId, true) : null;
+    });
+  }
+
+  recordConfirmationMessage(
+    actor: ImageGenerationActor,
+    generationId: string,
+    messageId: number,
+  ): Promise<boolean> {
+    return this.execute(async () => {
+      const row = await this.getRow(generationId);
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return false;
+      const [updated] = await this.db
+        .update(imageGenerations)
+        .set({
+          providerMetadata: mergeProviderMetadata({ confirmationMessageId: messageId }),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(imageGenerations.id, generationId), pendingConfirmationFilter()))
+        .returning({ id: imageGenerations.id });
+      return Boolean(updated);
+    });
+  }
+
+  findConfirmationByMessage(
+    actor: ImageGenerationActor,
+    messageId: number,
+  ): Promise<ImageGenerationView | null> {
+    return this.execute(async () => {
+      const rows = await this.db
+        .select()
+        .from(imageGenerations)
+        .where(
+          and(
+            eq(imageGenerations.botId, actor.botId),
+            eq(imageGenerations.chatId, actor.chatId),
+            pendingConfirmationFilter(),
+          ),
+        )
+        .limit(100);
+      const row = rows.find(
+        (candidate) => candidate.providerMetadata?.["confirmationMessageId"] === messageId,
+      );
+      return row && canAccess(actor, row) ? toView(row) : null;
+    });
+  }
+
+  cancelConfirmation(
+    actor: ImageGenerationActor,
+    generationId: string,
+  ): Promise<ImageCancellationResult> {
+    return this.execute(async () => {
+      const row = await this.getRow(generationId);
+      return this.cancelConfirmationImpl(actor, generationId, row);
+    });
+  }
+
+  private async cancelConfirmationImpl(
+    actor: ImageGenerationActor,
+    generationId: string,
+    row: GenerationRow | null,
+  ): Promise<ImageCancellationResult> {
+    if (!row || !canAccess(actor, row)) return { ok: false, reason: "not_found" };
+    if (!isPendingConfirmation(row))
+      return { ok: false, reason: "terminal", generation: toView(row) };
+    const [cancelled] = await this.db
+      .update(imageGenerations)
+      .set({ state: "cancelled", approvalState: "rejected", updatedAt: new Date() })
+      .where(and(eq(imageGenerations.id, generationId), pendingConfirmationFilter()))
+      .returning({ id: imageGenerations.id });
+    if (!cancelled)
+      return {
+        ok: false,
+        reason: "terminal",
+        generation: (await this.getOwned(actor, generationId))!,
+      };
+    await this.recordEvent(row.botId, generationId, "state_changed", "cancelled", undefined, {
+      confirmation: "rejected",
+    });
+    return { ok: true, generation: (await this.getOwned(actor, generationId))! };
   }
 
   retryDelivery(
@@ -877,6 +1211,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<ImageCancellationResult> {
     const row = await this.getRow(generationId);
     if (!row || !canAccess(actor, row)) return { ok: false, reason: "not_found" };
+    if (isPendingConfirmation(row)) return this.cancelConfirmationImpl(actor, generationId, row);
     if (
       row.state === "cancel_requested" ||
       row.providerMetadata?.["cancellationState"] === "requested"
@@ -1111,6 +1446,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async advanceOnce(id: string): Promise<void> {
     const row = await this.getRow(id);
     if (!row) return;
+    if (isPendingConfirmation(row)) return;
     if (row.state === "succeeded" && row.localFiles.length > 0) {
       await this.settleImageUsage(row);
       await this.deliverCompleted(row);
@@ -1718,9 +2054,10 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async getOwned(
     actor: ImageGenerationActor,
     id: string,
+    preview = false,
   ): Promise<ImageGenerationView | null> {
     const row = await this.getRow(id);
-    return row && canAccess(actor, row) ? toView(row) : null;
+    return row && canAccess(actor, row) ? toView(row, preview) : null;
   }
 
   private async getRow(id: string) {
@@ -1899,6 +2236,22 @@ function sanitizedProviderErrorCode(error: unknown): string {
 
 type GenerationRow = NonNullable<Awaited<ReturnType<ImageGenerationService["getRow"]>>>;
 
+function isPendingConfirmation(row: GenerationRow): boolean {
+  return (
+    row.state === "awaiting_approval" &&
+    row.approvalState === "required" &&
+    !row.providerOperationId
+  );
+}
+
+function pendingConfirmationFilter() {
+  return and(
+    eq(imageGenerations.state, "awaiting_approval"),
+    eq(imageGenerations.approvalState, "required"),
+    isNull(imageGenerations.providerOperationId),
+  );
+}
+
 function canAccess(actor: ImageGenerationActor, row: GenerationRow): boolean {
   if (actor.botId !== row.botId) return false;
   if (actor.isBotAdmin) return true;
@@ -2011,7 +2364,7 @@ function deliveryState(row: GenerationRow): NonNullable<ImageGenerationView["del
   return "pending";
 }
 
-function toView(row: GenerationRow): ImageGenerationView {
+function toView(row: GenerationRow, preview = false): ImageGenerationView {
   return {
     id: row.id,
     purpose: row.purpose as ImageGenerationView["purpose"],
@@ -2020,6 +2373,34 @@ function toView(row: GenerationRow): ImageGenerationView {
     state: row.state as ImageGenerationState,
     providerState: safeCorrelationId(row.providerState),
     providerOperationId: safeCorrelationId(row.providerOperationId),
+    confirmationVersion:
+      typeof row.providerMetadata?.["confirmationVersion"] === "number"
+        ? row.providerMetadata["confirmationVersion"]
+        : undefined,
+    ...(preview && row.providerMetadata?.["confirmationVersion"]
+      ? {
+          confirmationPreview: {
+            prompt:
+              typeof row.providerMetadata["confirmationDraftPrompt"] === "string"
+                ? row.providerMetadata["confirmationDraftPrompt"]
+                : row.prompt,
+            negativePrompt: row.negativePrompt ?? undefined,
+            size:
+              row.requestSnapshot?.size ??
+              row.requestSnapshot?.imageSize ??
+              (row.requestSnapshot?.width && row.requestSnapshot.height
+                ? `${row.requestSnapshot.width}×${row.requestSnapshot.height}`
+                : undefined),
+            aspectRatio: row.requestSnapshot?.aspectRatio,
+            quality: row.requestSnapshot?.quality,
+            modelId: row.requestSnapshot?.modelId,
+          },
+        }
+      : {}),
+    confirmationSeed:
+      typeof row.providerMetadata?.["confirmationDraftSeed"] === "number"
+        ? row.providerMetadata["confirmationDraftSeed"]
+        : (row.seed ?? undefined),
     requestContext: row.requestSnapshot?.requestContext,
     deliveryState: deliveryState(row),
     deliveryTarget: { chatId: row.chatId, threadId: row.requestSnapshot?.requestContext?.threadId },

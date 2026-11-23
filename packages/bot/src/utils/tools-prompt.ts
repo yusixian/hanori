@@ -3,6 +3,7 @@ import type { ToolPromptCapability } from "./tool-capabilities.js";
 
 export interface ExtendedToolsPromptOptions {
   capabilities: ReadonlySet<ToolPromptCapability>;
+  botMemoryContractIncluded?: boolean;
   availableAgents: string[];
   isPrivate: boolean;
   /** Effective set_timer ceiling, in seconds. Must match the tool schema. */
@@ -38,6 +39,11 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push(
     "- react_to_message: 对当前消息添加 emoji 表情回应。只能使用 Telegram 允许的 emoji: 👍 👎 ❤ 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡",
   );
+  if (opts.capabilities.has("quote-sticker")) {
+    lines.push(
+      "- create_quote_sticker: 将本轮真实可见消息制作成语录；可响应明确请求或克制记录名场面，只截原文，不编造、不刷屏。每轮最多发送一次，受隐私与保护规则约束。",
+    );
+  }
   if (opts.capabilities.has("sticker")) {
     lines.push("- send_sticker: 发送一个贴纸来表达情绪");
   }
@@ -50,7 +56,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("- send_choice: 发送 inline keyboard 选择按钮（用户点击后你会自动收到通知）");
   lines.push("- close_poll: 手动关闭投票并获取最终结果");
   lines.push(
-    `- set_timer: 设置定时器，到期后你会自动收到通知继续对话。单个定时器最长 ${opts.timerMaxSeconds} 秒`,
+    "- set_timer: 提出一次性定时任务；配置持久任务服务时需管理员确认后生效，没有一天或七天上限。复杂或周期任务用 propose_scheduled_task。",
   );
   lines.push("- cancel_timer: 取消定时器");
   lines.push("- send_dice: 发送骰子/随机动画");
@@ -123,11 +129,13 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     lines.push("- 当用户发送文件或图片时，消息中会标注附件信息");
     lines.push("- 如果你判断需要保存该文件，应在当前回合立即调用 save_received_file");
     lines.push("- 只有管理员在面板中标记为「可注入」的 .md 文件才会被注入到 system prompt");
-    lines.push("- 当你需要记录长期信息或更新自己的设定时，使用 write_file");
+    lines.push(
+      "- write_file 可更新工作文件；已启用提示词版本中的文件只读，修改设定需管理员另存新版本并启用",
+    );
   }
 
-  // Bot memory tools
-  if (opts.capabilities.has("bot-memory")) {
+  // The context assembler already includes the full memory policy as its own section.
+  if (opts.capabilities.has("bot-memory") && !opts.botMemoryContractIncluded) {
     lines.push("");
     lines.push("长期记忆工具:");
     lines.push(

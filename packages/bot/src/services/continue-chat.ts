@@ -1,3 +1,7 @@
+import { createModelRecovery, type RecoverySelection } from "../utils/model-recovery.js";
+import type { ChatSummaryCallback } from "@cos-tool-bot/shared";
+import { capturePromptConfig, type PromptSnapshotConfig } from "./prompt-snapshot.js";
+import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
 import { imageToolCompletion } from "../utils/image-generation-status.js";
 import type { PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import {
@@ -60,6 +64,7 @@ import type { PendingAdminActionRegistry } from "./pending-github-actions.js";
 import { KeyedIngressLock } from "./ai-ingress-lock.js";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
 import { throwCapturedStreamError } from "../utils/stream-error.js";
+import { getTurnResponseTexts } from "../utils/turn-response-text.js";
 
 /**
  * Serialises continuations for callers that supply no `runWithExecution`, keyed by
@@ -71,6 +76,7 @@ export interface ContinueChatSelection {
   model: LanguageModel;
   modelId: string;
   providerId: string;
+  providerFormat?: "openai" | "gemini";
   temperature?: number;
   maxTokens?: number;
   providerOptions?: Record<string, Record<string, JSONValue>>;
@@ -85,10 +91,18 @@ export interface ContinueChatRunContext {
   isCurrent(): boolean;
 }
 
-export interface ContinueChatConfig {
+export interface ContinueChatConfig extends PromptSnapshotConfig {
+  summarizeChat?: ChatSummaryCallback;
+  scheduledTasks?: ScheduledTaskPort;
+  onOwnMessageEdited?: (chatId: number, messageId: number, content: string) => void;
   diagnosticSecrets?: readonly string[];
   botId: string;
   resolveSelection: (chatId: number) => Readonly<ContinueChatSelection>;
+  modelRecovery?: import("@cos-tool-bot/shared").ModelRecoveryConfig;
+  resolveFallback?: (pair: {
+    providerId: string;
+    modelId: string;
+  }) => RecoverySelection | undefined;
   isAiDisabled?: () => boolean;
   registerAbortController?: (c: AbortController) => void;
   unregisterAbortController?: (c: AbortController) => void;
@@ -115,6 +129,8 @@ export interface ContinueChatConfig {
   timeoutConfig?: TimeoutConfig;
   webTools?: Record<string, Tool>;
   imageGenerationPort?: ImageGenerationPort;
+  imageGenerationConfirmation?: "always" | "never";
+  groupOverrides?: Record<string, import("@cos-tool-bot/shared").AiGroupOverride>;
   generationLibraryPort?: GenerationLibraryPort;
   skills?: readonly BotSkillDefinition[];
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
@@ -402,11 +418,12 @@ export async function continueChat(
 
 async function doContinueChat(
   api: Api,
-  config: ContinueChatConfig,
+  baseConfig: ContinueChatConfig,
   event: ContinueChatEvent,
   executionContext?: ContinueChatRunContext,
   privacyMode?: "normal" | "isolated" | "off",
 ): Promise<boolean> {
+  const config = await capturePromptConfig(baseConfig);
   const { chatId, eventDescription } = event;
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
 
@@ -478,6 +495,9 @@ async function doContinueChat(
       : undefined;
 
     const deliveredMultiMessages: string[] = [];
+    const deliveredMessages = new Map<number, string>();
+    const deliveredReplyTargets = new Map<number, number>();
+    const deliveredThreads = new Map<number, number | null>();
     let replyableMessageIds: readonly number[] = [];
     const isPrivate = chatId > 0;
     const toolsetConfig: TurnToolsetConfig = {
@@ -497,6 +517,10 @@ async function doContinueChat(
       skills: config.skills,
       generationLibraryPort: config.generationLibraryPort,
       imageGenerationPort: config.imageGenerationPort,
+      scheduledTasks: config.scheduledTasks,
+      summarizeChat: config.summarizeChat,
+      imageGenerationConfirmation: config.imageGenerationConfirmation,
+      groupOverrides: config.groupOverrides,
       isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
       rssCallbacks: config.rssCallbacks,
       pendingAdminActions: config.pendingAdminActions,
@@ -523,6 +547,17 @@ async function doContinueChat(
         onceGuard,
         telegram: {
           getReplyableMessageIds: () => replyableMessageIds,
+          conversation: convCfg.enabled ? config.conversation : undefined,
+          richMessageEnabled: isRichMessageEnabled(config.messageConfig),
+          onTextMessageSent: (id, content, parent, thread) => {
+            deliveredMessages.set(id, content);
+            if (parent) deliveredReplyTargets.set(id, parent);
+            if (thread !== undefined) deliveredThreads.set(id, thread);
+          },
+          onOwnMessageEdited: (id, content) => {
+            if (deliveredMessages.has(id)) deliveredMessages.set(id, content);
+            config.onOwnMessageEdited?.(chatId, id, content);
+          },
           pendingActions: config.pendingActions,
           onTimerFired: wrappedOnTimerFired,
           onTimerCreate:
@@ -535,7 +570,8 @@ async function doContinueChat(
         },
         behavior: {
           moodState: config.moodState,
-          onMultiMessageSent: (text) => {
+          onMultiMessageSent: (text, id) => {
+            deliveredMessages.set(id, text);
             deliveredMultiMessages.push(text);
             visibleDeliveryCount += 1;
           },
@@ -619,8 +655,26 @@ async function doContinueChat(
     stopChatActionHeartbeat = startChatActionHeartbeat(() => api.sendChatAction(chatId, "typing"));
 
     // ─── streamText (ai v6 API) ───
+    const recoveryPolicy =
+      config.groupOverrides?.[String(chatId)]?.modelRecovery ?? config.modelRecovery;
+    const recovery = createModelRecovery({
+      primary: selection,
+      fallback: recoveryPolicy?.fallback
+        ? config.resolveFallback?.(recoveryPolicy.fallback)
+        : undefined,
+      config: recoveryPolicy,
+      onLog: config.onLog,
+      signal: perStepAbort.signal,
+      secrets: config.diagnosticSecrets,
+      onSelectionChange: (next) => {
+        selectedProviderId = next.providerId;
+        selectedModelId = next.modelId;
+      },
+    });
     const result = streamText({
-      model: selection.model,
+      model: recovery.model,
+      maxRetries: 0,
+      experimental_repairToolCall: recovery.repairToolCall,
       messages,
       tools: composeTurnTools(toolset.tools, {
         secrets: config.diagnosticSecrets,
@@ -657,8 +711,8 @@ async function doContinueChat(
           level: "error",
           message: "AI continuation provider stream error",
           meta: {
-            providerId: selection.providerId,
-            model: selection.modelId,
+            providerId: recovery.selection().providerId,
+            model: recovery.selection().modelId,
             error,
           },
         });
@@ -694,7 +748,7 @@ async function doContinueChat(
               });
             },
           );
-          const { sentMessages } = await streamToChat(
+          const { sentMessages, text: streamedContent } = await streamToChat(
             api,
             chatId,
             filteredStream,
@@ -702,6 +756,8 @@ async function doContinueChat(
           );
           for (const msg of sentMessages) {
             chatBotMsgIds.push(msg.message_id);
+            const content = msg.text ?? (msg.rich_message ? streamedContent : undefined);
+            if (content) deliveredMessages.set(msg.message_id, content);
           }
           streamedMessageCount = sentMessages.length;
         } catch (streamErr) {
@@ -738,27 +794,36 @@ async function doContinueChat(
     }
 
     throwCapturedStreamError(providerStreamError, false);
-    const rawResponseText = (await result.text).trim();
-    const afterThink = stripThinkingContent(rawResponseText, ({ pattern, strippedLength }) => {
-      config.onLog?.({
-        level: "info",
-        message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
-        meta: { chatId },
-      });
-    });
-    const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
-      config.onLog?.({
-        level: "warn",
-        message: `Stripped meta prefix from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
-        meta: { chatId },
-      });
-    });
+    const finalText = await result.text;
+    const steps = await result.steps;
+    const responseSelection = recovery.streamSelections.at(-1) ?? recovery.selection();
+    const rawResponseTexts = getTurnResponseTexts(finalText, steps);
+    const rawResponseText = rawResponseTexts.join("\n\n");
+    const responseTexts = rawResponseTexts
+      .map((rawText) => {
+        const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
+          config.onLog?.({
+            level: "info",
+            message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+            meta: { chatId },
+          });
+        });
+        return stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
+          config.onLog?.({
+            level: "warn",
+            message: `Stripped meta prefix from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+            meta: { chatId },
+          });
+        });
+      })
+      .filter((text) => text.trim());
+    const text = responseTexts.join("\n\n");
     config.onLog?.({
       level: "debug",
       message: "AI continuation response",
       meta: {
-        providerId: selection.providerId,
-        model: selection.modelId,
+        providerId: responseSelection.providerId,
+        model: responseSelection.modelId,
         rawResponseText,
         responseText: text,
       },
@@ -767,15 +832,16 @@ async function doContinueChat(
     stopChatActionHeartbeat = undefined;
     const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
     const sentViaMultiMessage = deliveredMultiMessages.length > 0;
-    const trailingTextCovered =
-      sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
+    const pendingText = responseTexts
+      .filter((part) => !isTextCoveredByDeliveries(part, deliveredMultiMessages))
+      .join("\n\n");
     const deliveredFinalChunks: string[] = [];
 
     // Send text unless its complete content is already confirmed as delivered.
-    if ((!isStreamMode && !trailingTextCovered && text) || (streamFailed && text)) {
+    if ((!isStreamMode || streamFailed) && pendingText) {
       const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
       const threshold = msgCfg.autoSplitThreshold ?? 0;
-      const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
+      const chunks = splitMessage(pendingText, threshold > 0 ? threshold : 4096);
       for (const [i, chunk] of chunks.entries()) {
         if (isExecutionCancelled()) break;
         if (i > 0) {
@@ -802,6 +868,7 @@ async function doContinueChat(
             },
           );
           chatBotMsgIds.push(message.message_id);
+          deliveredMessages.set(message.message_id, chunk);
           deliveredFinalChunks.push(chunk);
           visibleDeliveryCount += 1;
         } catch (sendError) {
@@ -851,29 +918,49 @@ async function doContinueChat(
     }
 
     // Await full results for post-processing
-    const steps = await result.steps;
     const totalUsage = await result.totalUsage;
     const durationMs = Date.now() - startTime;
 
     // Record token usage
-    config.onTokenUsage?.({
-      chatId,
-      userId: event.userId,
-      model: selection.modelId,
-      promptTokens: totalUsage.inputTokens ?? 0,
-      completionTokens: totalUsage.outputTokens ?? 0,
-      totalTokens: totalUsage.totalTokens ?? 0,
-      ...extractCacheTokenUsage(
-        totalUsage,
-        steps.map((step) => step.usage),
-      ),
-      providerId: selection.providerId,
-      staticPrefixHash: promptTrace.staticPrefixHash,
-      toolSchemaHash,
-      cacheFingerprint,
-      durationMs,
-      trigger: "event_continuation",
-    });
+    const usageRecords = recovery.streamSelections.some(
+      (entry) => entry.providerId !== selection.providerId || entry.modelId !== selection.modelId,
+    )
+      ? steps.map((step, index) => ({
+          selection: recovery.streamSelections[index] ?? recovery.selection(),
+          usage: step.usage,
+          steps: [step.usage],
+        }))
+      : [
+          {
+            selection: recovery.streamSelections[0] ?? recovery.selection(),
+            usage: totalUsage,
+            steps: steps.map((step) => step.usage),
+          },
+        ];
+    for (const record of [
+      ...usageRecords,
+      ...recovery.repairUsages.map((record) => ({ ...record, steps: [record.usage] })),
+    ])
+      config.onTokenUsage?.({
+        chatId,
+        userId: event.userId,
+        model: record.selection.modelId,
+        promptTokens: record.usage.inputTokens ?? 0,
+        completionTokens: record.usage.outputTokens ?? 0,
+        totalTokens: record.usage.totalTokens ?? 0,
+        ...extractCacheTokenUsage(record.usage, record.steps),
+        providerId: record.selection.providerId,
+        staticPrefixHash: promptTrace.staticPrefixHash,
+        toolSchemaHash,
+        cacheFingerprint: createCacheFingerprint({
+          providerId: record.selection.providerId,
+          model: record.selection.modelId,
+          staticPrefixHash: promptTrace.staticPrefixHash,
+          toolSchemaHash,
+        }),
+        durationMs,
+        trigger: "event_continuation",
+      });
 
     // Save to conversation history
     if (config.conversation && convCfg.enabled) {
@@ -894,12 +981,21 @@ async function doContinueChat(
       });
 
       // Save the exact assistant content delivered to the chat.
-      if (assistantContent) {
+      for (const [id, content] of deliveredMessages) {
         toSave.push({
           chatId,
           role: "assistant",
-          content: assistantContent,
-          meta: { trigger: "event_continuation" },
+          content,
+          meta: {
+            trigger: "event_continuation",
+            model: responseSelection.modelId,
+            providerId: responseSelection.providerId,
+            tgMessageId: id,
+            ...(deliveredThreads.has(id) ? { threadId: deliveredThreads.get(id) } : {}),
+            ...(deliveredReplyTargets.has(id)
+              ? { replyToTgMessageId: deliveredReplyTargets.get(id) }
+              : {}),
+          },
         });
       }
 
@@ -926,8 +1022,8 @@ async function doContinueChat(
       message: "continueChat completed",
       meta: {
         chatId,
-        providerId: selection.providerId,
-        model: selection.modelId,
+        providerId: responseSelection.providerId,
+        model: responseSelection.modelId,
         eventDescription,
         responseText: assistantContent,
         textLength: assistantContent.length,

@@ -1,3 +1,4 @@
+import type { ScheduledTaskPort, ScheduledTaskRecord } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { generateText } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
@@ -49,24 +50,10 @@ function timerSecondsSchema(
   return (tools.set_timer!.inputSchema as unknown as TimerSchema).jsonSchema.properties.seconds;
 }
 
-describe("set_timer duration ceiling", () => {
-  it("follows the configured ceiling in both the schema and its description", () => {
-    const seconds = timerSecondsSchema(604_800);
-
-    expect(seconds.maximum).toBe(604_800);
-    expect(seconds.description).toBe("定时秒数（5-604800，即最长7天）");
-  });
-
-  it("falls back to 24 hours when no ceiling is configured", () => {
-    const seconds = timerSecondsSchema();
-
-    expect(seconds.maximum).toBe(86_400);
-    expect(seconds.description).toBe("定时秒数（5-86400，即最长1天）");
-  });
-
-  it("clamps a stored ceiling that sits outside the supported range", () => {
-    expect(timerSecondsSchema(30).maximum).toBe(300);
-    expect(timerSecondsSchema(30 * 86_400).maximum).toBe(604_800);
+describe("set_timer date range", () => {
+  it("does not expose the legacy one-day or seven-day product ceiling", () => {
+    for (const ceiling of [undefined, 30, 604800])
+      expect(timerSecondsSchema(ceiling).maximum).toBeUndefined();
   });
 });
 
@@ -79,6 +66,61 @@ describe("telegram timer scheduling", () => {
     vi.useRealTimers();
   });
 
+  it("turns legacy timer requests into pending proposals instead of starting timers", async () => {
+    const plan = {
+      name: "later",
+      instructions: "later",
+      dataScope: { kind: "none" as const },
+      destination: { chatId: 42 },
+      schedule: { kind: "once" as const, at: "2030-01-01T00:00:00Z", timezone: "UTC" },
+      agent: {},
+    };
+    const propose = vi.fn().mockResolvedValue({
+      id: "task",
+      pendingVersion: 1,
+      pendingPlan: plan,
+      proposerId: 1,
+      proposerName: "member",
+      status: "pending",
+    } as ScheduledTaskRecord);
+    const bindConfirmation = vi.fn();
+    const onTimerCreate = vi.fn();
+    const tools = createTelegramTools({
+      api: { sendMessage: vi.fn().mockResolvedValue({ message_id: 10 }) } as unknown as Api,
+      chatId: 42,
+      recentBotMessageIds: [],
+      scheduledTaskActor: { botId: "bot", chatId: 42, userId: 1, isAdmin: false },
+      scheduledTasks: { propose, bindConfirmation } as unknown as ScheduledTaskPort,
+      onTimerCreate,
+    });
+    const result = await (tools.set_timer as unknown as ExecutableTool).execute(
+      { seconds: 100 * 86400, reason: "later" },
+      { abortSignal: new AbortController().signal },
+    );
+    expect(result).toMatchObject({ status: "awaiting_admin_confirmation" });
+    expect(propose).toHaveBeenCalledOnce();
+    expect(onTimerCreate).not.toHaveBeenCalled();
+    expect(bindConfirmation).toHaveBeenCalledWith(expect.anything(), "task", 1, 10);
+  });
+  it("does not overflow a standalone native timer", async () => {
+    const onTimerFired = vi.fn();
+    const pendingActions = new PendingActionRegistry();
+    const tools = createTelegramTools({
+      api: {} as Api,
+      chatId: 42,
+      recentBotMessageIds: [],
+      pendingActions,
+      onTimerFired,
+    });
+    const result = await (tools.set_timer as unknown as ExecutableTool).execute(
+      { seconds: 100 * 86400, reason: "later" },
+      { abortSignal: new AbortController().signal },
+    );
+    expect(result).toHaveProperty("error");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(onTimerFired).not.toHaveBeenCalled();
+    pendingActions.destroy();
+  });
   it("accepts the minimum duration and sends it to the durable scheduler", async () => {
     const pendingActions = new PendingActionRegistry();
     const onTimerCreate = vi.fn(async () => {});
@@ -128,7 +170,7 @@ describe("telegram timer scheduling", () => {
     pendingActions.destroy();
   });
 
-  it("returns an explicit error above the configured ceiling without scheduling", async () => {
+  it("accepts dates beyond seven days and native timer range through durable scheduling", async () => {
     const pendingActions = new PendingActionRegistry();
     const onTimerCreate = vi.fn(async () => {});
     const tools = createTelegramTools({
@@ -137,27 +179,20 @@ describe("telegram timer scheduling", () => {
       recentBotMessageIds: [],
       pendingActions,
       onTimerCreate,
-      onTimerFired: vi.fn(async () => {}),
-      timerMaxSeconds: 604_800,
+      onTimerFired: vi.fn(),
+      timerMaxSeconds: 604800,
     });
     const result = await generateText({
-      model: mockTimerModel(604_801),
-      prompt: "Set a timer above the configured maximum.",
+      model: mockTimerModel(100 * 86400),
+      prompt: "Set a remote date",
       tools,
     });
-
     expect(result.toolResults).toHaveLength(1);
-    expect(result.toolResults[0]?.output).toMatchObject({
-      error: expect.stringContaining("604800"),
-    });
-    expect(onTimerCreate).not.toHaveBeenCalled();
+    expect(onTimerCreate).toHaveBeenCalledWith(expect.objectContaining({ seconds: 100 * 86400 }));
     pendingActions.destroy();
   });
 
-  it.each([
-    { seconds: 4, timerMaxSeconds: undefined, bound: "5", label: "below minimum" },
-    { seconds: 86_401, timerMaxSeconds: undefined, bound: "86400", label: "above default ceiling" },
-  ])(
+  it.each([{ seconds: 4, timerMaxSeconds: undefined, bound: "5", label: "below minimum" }])(
     "returns an explicit error for $label without scheduling",
     async ({ seconds, timerMaxSeconds, bound }) => {
       const pendingActions = new PendingActionRegistry();
@@ -177,9 +212,11 @@ describe("telegram timer scheduling", () => {
         tools,
       });
 
-      expect(result.toolResults[0]?.output).toMatchObject({
-        error: expect.stringContaining(bound),
-      });
+      expect(result.content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "tool-error", error: expect.stringContaining(bound) }),
+        ]),
+      );
       expect(onTimerCreate).not.toHaveBeenCalled();
       pendingActions.destroy();
     },

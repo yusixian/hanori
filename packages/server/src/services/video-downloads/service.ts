@@ -5,10 +5,12 @@ import {
   type VideoDownloadPort,
   type VideoDownloadStatus,
   type VideoDownloadView,
+  type VideoDownloadProvider,
 } from "@cos-tool-bot/shared";
 import { and, asc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { BilibiliClientError } from "../media/bilibili.js";
-import { MediaHttpError } from "../media/http.js";
+import { MediaHttpError, publicMediaUrl } from "../media/http.js";
+import { YtdlpError } from "../media/yt-dlp.js";
 import { VideoDownloadCacheError } from "./cache.js";
 import {
   VideoDownloadError,
@@ -22,9 +24,13 @@ export interface DownloadedVideo {
   path: string;
   bytes: number;
   expiresAt: number;
+  durationSeconds?: number;
 }
 export interface VideoDownloadDependencies {
-  configuration(botId: string): Promise<VideoDownloadConfiguration | null>;
+  configuration(
+    botId: string,
+    provider?: VideoDownloadProvider,
+  ): Promise<VideoDownloadConfiguration | null>;
   inspect(
     source: string,
     config: VideoDownloadConfiguration,
@@ -35,7 +41,11 @@ export interface VideoDownloadDependencies {
     config: VideoDownloadConfiguration,
     options: { signal: AbortSignal; onStage(stage: VideoDownloadStage): Promise<void> },
   ): Promise<DownloadedVideo>;
-  deliver(row: VideoDownloadRow, file: DownloadedVideo, signal: AbortSignal): Promise<number>;
+  deliver(
+    row: VideoDownloadRow & { durationSeconds: number },
+    file: DownloadedVideo,
+    signal: AbortSignal,
+  ): Promise<number>;
   cleanup(id: string, retain?: boolean): Promise<void>;
   sweep(): Promise<void>;
   notifyFailure?(row: VideoDownloadRow): Promise<void>;
@@ -76,6 +86,7 @@ function view(row: VideoDownloadRow): VideoDownloadView {
 }
 function matches(row: VideoDownloadRow, config: VideoDownloadConfiguration) {
   return (
+    (config.provider ?? "bilibili") === row.provider &&
     row.configRevision === config.revision &&
     row.installationRevision === config.installationRevision
   );
@@ -85,7 +96,8 @@ function safeError(error: unknown): string {
     error instanceof VideoDownloadError ||
     error instanceof VideoDownloadCacheError ||
     error instanceof MediaHttpError ||
-    error instanceof BilibiliClientError
+    error instanceof BilibiliClientError ||
+    error instanceof YtdlpError
   )
     return error.code;
   return "download_failed";
@@ -96,7 +108,12 @@ function safeError(error: unknown): string {
  */
 export class VideoDownloadService implements VideoDownloadPort {
   private readonly shutdown = new AbortController();
-  private active?: { id: string; botId: string; controller: AbortController };
+  private active?: {
+    id: string;
+    botId: string;
+    provider: VideoDownloadProvider;
+    controller: AbortController;
+  };
   private ticking?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   private stopped = false;
@@ -106,8 +123,8 @@ export class VideoDownloadService implements VideoDownloadPort {
     private readonly deps: VideoDownloadDependencies,
   ) {}
 
-  private async configuration(botId: string) {
-    const config = await this.deps.configuration(botId);
+  private async configuration(botId: string, provider: VideoDownloadProvider = "bilibili") {
+    const config = await this.deps.configuration(botId, provider);
     if (!config) throw new VideoDownloadError("configuration_required");
     return config;
   }
@@ -131,7 +148,7 @@ export class VideoDownloadService implements VideoDownloadPort {
   }
   async create(
     actor: VideoDownloadActor,
-    input: { sourceUrl: string },
+    input: { sourceUrl: string; provider?: VideoDownloadProvider },
     callerSignal?: AbortSignal,
   ) {
     authorize(actor);
@@ -139,33 +156,46 @@ export class VideoDownloadService implements VideoDownloadPort {
     const signal = AbortSignal.any([
       this.shutdown.signal,
       ...(callerSignal ? [callerSignal] : []),
-      AbortSignal.timeout(20_000),
+      AbortSignal.timeout(input.provider === "ytdlp" ? 90_000 : 20_000),
     ]);
     signal.throwIfAborted();
+    const provider = input.provider ?? "bilibili";
+    if (provider !== "bilibili" && provider !== "ytdlp")
+      throw new VideoDownloadError("invalid_source");
     try {
-      parseBilibiliResource(input.sourceUrl);
+      if (provider === "ytdlp") publicMediaUrl(input.sourceUrl);
+      else parseBilibiliResource(input.sourceUrl);
     } catch {
       throw new VideoDownloadError("invalid_source");
     }
-    const config = await this.configuration(actor.botId);
+    const config = await this.configuration(actor.botId, provider);
     const resource = await this.deps.inspect(input.sourceUrl, config, signal);
     signal.throwIfAborted();
-    const parsed = parseBilibiliResource(resource.canonicalUrl);
+    const parsed =
+      provider === "bilibili" ? parseBilibiliResource(resource.canonicalUrl) : undefined;
     if (
-      parsed.kind !== "canonical" ||
-      parsed.idType !== "bv" ||
-      parsed.id !== resource.bvid ||
-      parsed.part !== resource.part ||
-      parsed.canonicalUrl !== resource.canonicalUrl ||
+      (parsed &&
+        (parsed.kind !== "canonical" ||
+          parsed.idType !== "bv" ||
+          parsed.id !== resource.bvid ||
+          parsed.part !== resource.part ||
+          parsed.canonicalUrl !== resource.canonicalUrl)) ||
+      (provider === "ytdlp" &&
+        (publicMediaUrl(resource.canonicalUrl).href !== resource.canonicalUrl ||
+          resource.part !== 1 ||
+          !resource.bvid ||
+          resource.bvid.length > 1000)) ||
       typeof resource.title !== "string" ||
       resource.title.length > 500
     )
       throw new VideoDownloadError("invalid_source");
     if (
-      !Number.isSafeInteger(resource.durationSeconds) ||
-      resource.durationSeconds < 1 ||
-      resource.durationSeconds > config.limits.maxDurationSeconds ||
-      resource.durationSeconds > 2_147_483_647
+      resource.durationSeconds === null
+        ? provider !== "ytdlp"
+        : !Number.isSafeInteger(resource.durationSeconds) ||
+          resource.durationSeconds < 1 ||
+          resource.durationSeconds > config.limits.maxDurationSeconds ||
+          resource.durationSeconds > 2_147_483_647
     )
       throw new VideoDownloadError("duration_limit");
     const now = new Date();
@@ -174,7 +204,7 @@ export class VideoDownloadService implements VideoDownloadPort {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`video-download:create:${actor.botId}:${actor.userId}`},0))`,
       );
-      const current = await this.configuration(actor.botId);
+      const current = await this.configuration(actor.botId, provider);
       if (
         current.revision !== config.revision ||
         current.installationRevision !== config.installationRevision
@@ -189,6 +219,7 @@ export class VideoDownloadService implements VideoDownloadPort {
             eq(jobs.botId, actor.botId),
             eq(jobs.chatId, actor.chatId),
             eq(jobs.userId, actor.userId),
+            eq(jobs.provider, provider),
             eq(jobs.bvid, resource.bvid),
             eq(jobs.part, resource.part),
             eq(jobs.configRevision, config.revision),
@@ -217,6 +248,7 @@ export class VideoDownloadService implements VideoDownloadPort {
           configRevision: config.revision,
           installationRevision: config.installationRevision,
           sourceUrl: resource.canonicalUrl,
+          provider,
           bvid: resource.bvid,
           part: resource.part,
           title: resource.title,
@@ -252,17 +284,22 @@ export class VideoDownloadService implements VideoDownloadPort {
       this.active.controller.abort(new VideoDownloadError("cancelled"));
     return view(saved ?? (await this.owned(actor, id)));
   }
-  async cancelForBot(botId?: string) {
+  async cancelForBot(botId?: string, provider?: VideoDownloadProvider) {
     await this.db
       .update(jobs)
       .set({ cancelRequested: true, updatedAt: new Date() })
       .where(
         and(
           botId === undefined ? undefined : eq(jobs.botId, botId),
+          provider === undefined ? undefined : eq(jobs.provider, provider),
           inArray(jobs.status, activeStatuses),
         ),
       );
-    if (this.active && (botId === undefined || this.active.botId === botId))
+    if (
+      this.active &&
+      (botId === undefined || this.active.botId === botId) &&
+      (provider === undefined || this.active.provider === provider)
+    )
       this.active.controller.abort(new VideoDownloadError("configuration_changed"));
   }
   async start() {
@@ -355,13 +392,13 @@ export class VideoDownloadService implements VideoDownloadPort {
       this.shutdown.signal,
       AbortSignal.timeout(10 * 60_000),
     ]);
-    this.active = { id: row.id, botId: row.botId, controller };
+    this.active = { id: row.id, botId: row.botId, provider: row.provider, controller };
     let sending = false;
     let completed = false;
     let checking = false;
     const assertCurrent = async () => {
       signal.throwIfAborted();
-      const config = await this.configuration(row.botId);
+      const config = await this.configuration(row.botId, row.provider);
       const [current] = await this.db.select().from(jobs).where(eq(jobs.id, row.id));
       if (!current || current.cancelRequested) throw new VideoDownloadError("cancelled");
       if (!matches(row, config)) throw new VideoDownloadError("configuration_changed");
@@ -409,11 +446,20 @@ export class VideoDownloadService implements VideoDownloadPort {
         file.expiresAt <= Date.now()
       )
         throw new VideoDownloadError("invalid_video");
+      const durationSeconds = file.durationSeconds ?? row.durationSeconds;
+      if (
+        durationSeconds === null ||
+        !Number.isSafeInteger(durationSeconds) ||
+        durationSeconds < 1 ||
+        durationSeconds > config.limits.maxDurationSeconds
+      )
+        throw new VideoDownloadError("duration_limit");
       const [committing] = await this.db
         .update(jobs)
         .set({
           status: "sending",
           bytes: file.bytes,
+          durationSeconds,
           cacheExpiresAt: new Date(file.expiresAt),
           updatedAt: new Date(),
         })
@@ -428,7 +474,7 @@ export class VideoDownloadService implements VideoDownloadPort {
       if (!committing) throw new VideoDownloadError("cancelled");
       signal.throwIfAborted();
       sending = true;
-      const messageId = await this.deps.deliver(row, file, signal);
+      const messageId = await this.deps.deliver({ ...row, durationSeconds }, file, signal);
       if (!Number.isSafeInteger(messageId) || messageId < 1)
         throw new VideoDownloadError("delivery_unknown");
       // A known receipt remains success even if cancellation arrived during upload.

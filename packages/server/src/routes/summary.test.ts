@@ -48,3 +48,42 @@ describe("summary config routes", () => {
     expect(get).toHaveBeenCalledWith("bot-b", 7);
   });
 });
+
+it("owner preview binds trusted identity and rejects identity spoofing", async () => {
+  const summarize = vi.fn(async () => ({ ok: true, contentRaw: "preview" }));
+  const app = new Hono().route(
+    "/bots",
+    summaryRoutes(
+      {} as Database,
+      { summarize } as unknown as ChatSummaryService,
+      {} as SummaryConfigService,
+    ),
+  );
+  const body = {
+    chatId: -1,
+    threadId: 7,
+    since: "2026-01-01T00:00:00Z",
+    until: "2026-01-02T00:00:00Z",
+    maxMessages: 1000,
+    sourceRoles: "original",
+  };
+  const request = (data: unknown) =>
+    app.request("/bots/bot-a/summary/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  expect((await request(body)).status).toBe(200);
+  expect(summarize).toHaveBeenCalledWith({
+    botId: "bot-a",
+    chatId: -1,
+    threadId: 7,
+    userId: 0,
+    owner: true,
+    originalMessagesOnly: true,
+    request: { since: body.since, until: body.until, maxMessages: 1000 },
+  });
+  expect((await request({ ...body, userId: 123 })).status).toBe(400);
+  expect((await request({ ...body, maxMessages: 2001 })).status).toBe(400);
+  expect(summarize).toHaveBeenCalledOnce();
+});

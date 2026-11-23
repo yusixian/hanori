@@ -5,6 +5,8 @@ import {
   conversationSummaries,
 } from "@cos-tool-bot/database";
 import {
+  parseQuoteSource,
+  type QuoteSource,
   formatConversationForwardOrigin,
   formatConversationRelayOrigin,
   parseConversationRelayOrigin,
@@ -236,6 +238,18 @@ function projectTgMessageId(meta: Record<string, unknown> | null | undefined): {
   return typeof tgMessageId === "number" && Number.isInteger(tgMessageId) ? { tgMessageId } : {};
 }
 
+function projectQuoteSource(meta: Record<string, unknown> | null | undefined): {
+  quoteSource?: QuoteSource;
+} {
+  const source = parseQuoteSource(meta?.["quoteSource"]);
+  return source &&
+    source.messageId === meta?.["tgMessageId"] &&
+    Object.hasOwn(meta ?? {}, "threadId") &&
+    source.threadId === meta?.["threadId"]
+    ? { quoteSource: source }
+    : {};
+}
+
 function truncateToTokenBudget(content: string, budget: number): string {
   if (budget <= 0) return "";
   if (countTokens(content) <= budget) return content;
@@ -261,6 +275,7 @@ export function selectHistoryWithinTokenBudget(
     forwardOrigin?: ConversationForwardOrigin;
     relayOrigin?: ConversationRelayOrigin;
     tgMessageId?: number;
+    quoteSource?: QuoteSource;
   }>,
   active:
     | {
@@ -328,6 +343,7 @@ export function selectHistoryWithinTokenBudget(
       reversed.push({
         ...message,
         content: truncateToTokenBudget(message.content, contentBudget),
+        quoteSource: undefined,
       });
       tailTokens = tailBudget;
       break;
@@ -413,6 +429,43 @@ export class ConversationStore {
       )
       .returning({ id: conversationSummaries.id });
     return deleted.length;
+  }
+
+  async findOwnMessage(botId: string, chatId: number, messageId: number): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: conversationMessages.id })
+      .from(conversationMessages)
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          eq(conversationMessages.role, "assistant"),
+          sql`${conversationMessages.meta}->>'tgMessageId' = ${String(messageId)}`,
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async updateOwnMessage(
+    botId: string,
+    chatId: number,
+    messageId: number,
+    content: string,
+  ): Promise<void> {
+    const rows = await this.db
+      .update(conversationMessages)
+      .set({ content, embedding: null })
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          eq(conversationMessages.role, "assistant"),
+          sql`${conversationMessages.meta}->>'tgMessageId' = ${String(messageId)}`,
+        ),
+      )
+      .returning({ id: conversationMessages.id });
+    if (!rows.length) throw new Error("Editable message history no longer exists");
   }
 
   async addMessage(params: ConversationMessageInput) {
@@ -577,6 +630,7 @@ export class ConversationStore {
       excludeSourceKey?: string;
       beforeId?: number;
       beforeTelegramMessageId?: number;
+      threadId?: number | null;
     },
   ) {
     const historyBeforeId = options?.beforeId;
@@ -584,7 +638,15 @@ export class ConversationStore {
       historyBeforeId,
       options?.beforeTelegramMessageId,
     );
-    const activeCompaction = await this.getActiveCompaction(botId, chatId);
+    // Compactions mix all topics; only raw, scoped rows are safe for a topic request.
+    const activeCompaction =
+      options?.threadId === undefined ? await this.getActiveCompaction(botId, chatId) : undefined;
+    const threadCondition =
+      options?.threadId === undefined
+        ? undefined
+        : options.threadId === null
+          ? sql`${conversationMessages.meta}::jsonb ? 'threadId' AND ${conversationMessages.meta}->>'threadId' IS NULL`
+          : sql`${conversationMessages.meta}->>'threadId' = ${String(options.threadId)}`;
     const active =
       historyBeforeId === undefined || (activeCompaction?.cursorId ?? 0) < historyBeforeId
         ? activeCompaction
@@ -604,6 +666,7 @@ export class ConversationStore {
         forwardOrigin?: ConversationForwardOrigin;
         relayOrigin?: ConversationRelayOrigin;
         tgMessageId?: number;
+        quoteSource?: QuoteSource;
       }> = [];
       let pageBeforeOrderId: number | undefined;
       let pageBeforeId: number | undefined;
@@ -624,6 +687,7 @@ export class ConversationStore {
           );
         }
         if (historyBoundary) conditions.push(historyBoundary);
+        if (threadCondition) conditions.push(threadCondition);
         if (pageBeforeOrderId !== undefined && pageBeforeId !== undefined) {
           conditions.push(
             or(
@@ -655,6 +719,7 @@ export class ConversationStore {
           ...projectForwardOrigin(meta),
           ...projectRelayOrigin(meta),
           ...projectTgMessageId(meta),
+          ...projectQuoteSource(meta),
         }));
         newestFirst.push(...projectedBatch);
         scannedTokens += projectedBatch.reduce(
@@ -696,6 +761,7 @@ export class ConversationStore {
           ...(message.forwardOrigin ? { forwardOrigin: message.forwardOrigin } : {}),
           ...(message.relayOrigin ? { relayOrigin: message.relayOrigin } : {}),
           ...(message.tgMessageId === undefined ? {} : { tgMessageId: message.tgMessageId }),
+          ...(message.quoteSource ? { quoteSource: message.quoteSource } : {}),
         })),
         budgetTrace: selected.trace,
       };
@@ -719,6 +785,7 @@ export class ConversationStore {
           gt(historyOrderId, cursorId),
           inArray(conversationMessages.role, ["user", "assistant", "context"]),
           historyBoundary,
+          threadCondition,
           excludeSourceKey
             ? or(
                 isNull(conversationMessages.sourceKey),
@@ -741,6 +808,7 @@ export class ConversationStore {
         ...projectForwardOrigin(meta),
         ...projectRelayOrigin(meta),
         ...projectTgMessageId(meta),
+        ...projectQuoteSource(meta),
       })),
     };
   }

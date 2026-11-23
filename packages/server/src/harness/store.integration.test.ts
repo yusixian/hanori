@@ -141,7 +141,10 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
   });
 
   it("keeps topic bindings across upserts", async () => {
-    await store.upsertProject("sandbox", "example-owner/harness-sandbox", { chatId: -100, threadId: 9 });
+    await store.upsertProject("sandbox", "example-owner/harness-sandbox", {
+      chatId: -100,
+      threadId: 9,
+    });
     await store.upsertProject("sandbox", "example-owner/harness-sandbox", { policyError: null });
     const [project] = await store.listProjects();
     expect(project).toMatchObject({ key: "sandbox", chatId: -100, threadId: 9 });

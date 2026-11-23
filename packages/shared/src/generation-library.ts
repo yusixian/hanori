@@ -172,3 +172,24 @@ export interface GenerationLibraryPort {
     selection: GenerationMaterialSelection,
   ): Promise<{ prompt: string; snapshot: GenerationMaterialSnapshot }>;
 }
+export type GenerationLibraryErrorCode =
+  | "invalid_input"
+  | "forbidden"
+  | "not_found"
+  | "privacy_denied"
+  | "characters_disabled"
+  | "assets_disabled"
+  | "nsfw_disabled"
+  | "no_default_character"
+  | "too_many_selections"
+  | "prompt_too_long";
+
+export class GenerationLibraryError extends Error {
+  constructor(
+    readonly code: GenerationLibraryErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "GenerationLibraryError";
+  }
+}

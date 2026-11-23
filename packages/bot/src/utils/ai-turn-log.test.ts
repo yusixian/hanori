@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { APICallError } from "ai";
 import { createAiTurnLogger } from "./ai-turn-log.js";
 
 describe("AI turn diagnostics", () => {
@@ -53,5 +54,39 @@ describe("AI turn diagnostics", () => {
       throw new Error("offline");
     }, {})({ level: "error", message: "failure" });
     await Promise.resolve();
+  });
+  it("retains structured transport context beyond a truncated request prefix", () => {
+    const sink = vi.fn();
+    const secret = "sensitive-provider-key";
+    const error = new APICallError({
+      message: "x".repeat(990) + secret,
+      url: "https://example.test/v1?key=" + secret,
+      requestBodyValues: { messages: Array.from({ length: 10 }, () => "x".repeat(20_000)) },
+      statusCode: 429,
+      responseBody: '{"error":{"code":"quota"}}',
+      responseHeaders: { "x-request-id": "req-1" },
+    });
+    createAiTurnLogger(sink, { chatId: 1 }, [secret])({
+      level: "error",
+      message: "failed",
+      meta: {
+        error,
+        model: "model-a",
+        providerId: "provider-a",
+        providerFormat: "openai",
+        stage: "model",
+      },
+    });
+    const meta = sink.mock.calls[0]![0].meta;
+    expect(meta).toMatchObject({
+      truncated: true,
+      model: "model-a",
+      providerId: "provider-a",
+      providerFormat: "openai",
+      stage: "model",
+      errorSummary: { statusCode: 429, code: "quota", requestId: "req-1" },
+    });
+    expect(JSON.stringify(meta)).not.toContain(secret);
+    expect(meta.errorSummary.message).not.toContain("sensitive");
   });
 });

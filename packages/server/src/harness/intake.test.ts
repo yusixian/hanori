@@ -16,9 +16,9 @@ describe("acceptsPullRequest", () => {
   });
 
   it("accepts trusted authors on other same-repo branches", () => {
-    expect(acceptsPullRequest(github, repo, { ...pr, headRef: "fix/x", author: "example-owner" })).toBe(
-      true,
-    );
+    expect(
+      acceptsPullRequest(github, repo, { ...pr, headRef: "fix/x", author: "example-owner" }),
+    ).toBe(true);
   });
 
   it("rejects fork PRs even on a harness-looking branch", () => {

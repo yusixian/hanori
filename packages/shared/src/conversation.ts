@@ -1,3 +1,4 @@
+import type { QuoteSource } from "./quote.js";
 export interface ConversationConfig {
   enabled: boolean;
   maxContextMessages: number;
@@ -73,6 +74,8 @@ export interface RecentCrossChatUserMessage {
 }
 
 export interface ConversationCallbacks {
+  findOwnMessage?(chatId: number, messageId: number): Promise<boolean>;
+  updateOwnMessage?(chatId: number, messageId: number, content: string): Promise<void>;
   getHistory(
     chatId: number,
     limit: number,
@@ -81,6 +84,8 @@ export interface ConversationCallbacks {
       excludeSourceKey?: string;
       beforeId?: number;
       beforeTelegramMessageId?: number;
+      /** When supplied, restrict history to this forum topic (null means non-topic messages). */
+      threadId?: number | null;
     },
   ): Promise<{
     summary: string | null;
@@ -94,6 +99,7 @@ export interface ConversationCallbacks {
       createdAt?: string;
       /** Telegram message ID, present for messages the bot ingested from a chat. */
       tgMessageId?: number;
+      quoteSource?: QuoteSource;
     }>;
     budgetTrace?: ConversationHistoryBudgetTrace;
   }>;

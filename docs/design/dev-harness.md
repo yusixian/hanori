@@ -422,7 +422,7 @@ docs: updated # updated | not-needed
 | H3 执行与小 bug | Lody 执行器、提示词模板、`/bug` 闭环                                         | 在 koyori 话题里 `/bug` → PR 卡片 → 合并                |
 | H4 大需求       | AI 分诊、建议开话题、spec issue、批准、stack 执行与逐层合并                  | 一个两层 stack 需求走完全程                             |
 | H5 发版与文档   | 版本规则、片段、preview/stable 卡片、文档检查                                | koyori 发出一次 alpha 和一次候选确认                    |
-| H6 部署与回滚   | Dokploy 适配、镜像 tag、pin、迁移检测，接入 example-gallery                   | 回滚到指定 commit，并创建 revert PR                     |
+| H6 部署与回滚   | Dokploy 适配、镜像 tag、pin、迁移检测，接入 example-gallery                  | 回滚到指定 commit，并创建 revert PR                     |
 | H7 扩展         | 自建节点（按需）、Mini App 证据页、每日汇总、T0 自动合并                     | —                                                       |
 
 ## 13. 待决问题

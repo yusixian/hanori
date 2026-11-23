@@ -18,15 +18,15 @@ Bot 会从共享命令目录和运行时注册表生成帮助与 Telegram 命令
 
 ## AI 和运行控制
 
-| 命令                | 作用                                           |
-| ------------------- | ---------------------------------------------- |
-| `/provider`         | 查看、切换或重置当前聊天的 Provider。          |
-| `/model`            | 查看、切换或重置当前聊天的模型。               |
-| `/replymode`        | 切换回复模式。                                 |
-| `/richtext`         | 切换 AI 富文本增强。                           |
-| `/stop` / `/resume` | 停止或恢复 AI 回复。                           |
-| `/quota`            | 查看 AI 与图片用量。                           |
-| `/summary`          | 总结群聊消息，支持最近条数、小时、今天或昨天。 |
+| 命令                | 作用                                                                      |
+| ------------------- | ------------------------------------------------------------------------- |
+| `/provider`         | 查看、切换或重置当前聊天的 Provider。                                     |
+| `/model`            | 查看、切换或重置当前聊天的模型。                                          |
+| `/replymode`        | 切换回复模式。                                                            |
+| `/richtext`         | 切换 AI 富文本增强。                                                      |
+| `/stop` / `/resume` | 停止或恢复 AI 回复。                                                      |
+| `/quota`            | 查看 AI 与图片用量。                                                      |
+| `/summary`          | 总结当前聊天/话题的可用消息，支持最近条数、小时、今天或昨天；会发送结果。 |
 
 ## 图片和媒体
 
@@ -75,3 +75,17 @@ Bot 会从共享命令目录和运行时注册表生成帮助与 Telegram 命令
 4. Bot 是否在最近重启后完成了注册和配置同步。
 
 命令菜单只表达元数据和当前注册结果，不代表外部 Provider 或 Telegram API 一定可用。
+
+## 语录贴纸 / Quote stickers
+
+启用语录渲染服务后，回复一条消息发送 `/q` 即可制作静态贴纸；此命令不调用语言模型，AI 关闭时也可用。在 Telegram 选中原文后回复 `/q` 可只引用选段。`/q 3` 从被回复消息向后取三条，`/q -3` 向前取三条（均含被回复消息，最多十条），最后按时间顺序排列。`/q r` 加一层父消息预览；参数可组合，例如 `/q -3 r purple`。
+
+父预览只使用当前 Bot 在同一聊天、同一话题中可读取的真实来源。Telegram 不会在被回复消息中递归提供父消息，因此需要本地保存的回复关系和父内容。历史记录缺少关系、父消息不可读取或受隐私限制时，会省略预览并说明原因；不会根据正文猜测父消息。新 AI 回复会保存实际发送结果中的回复目标，发送失败后退回普通消息时不会虚构回复关系。父预览以细竖线区分，连续同作者消息合并时仍保留各自的预览。气泡按内容收缩，长句使用更宽的正文区域以减少换行。
+
+连引只读取本 Bot 在当前聊天、当前话题可用的本地消息，不抓取 Telegram 全历史。单条直接回复不依赖历史；连引不足会明确显示实际条数。关闭历史采集、隐私限制、清理或重启前未保存的记录可能无法连引。图片与静态贴纸可加入语录，相邻同作者合并显示；长内容会作为 PNG 文件发送，避免缩成无法阅读的小字。
+
+`/qcolor ai|purple|dark|light|blue|#RRGGBB` 保存当前聊天默认配色，`/qcolor reset` 恢复默认深色。群内持久修改限群管理员或 Bot 管理员，私聊本人可设置；普通成员仍可用 `/q light` 指定本次颜色。英文 Telegram 界面提供英文命令帮助和操作提示。
+
+受保护内容与隐私 `off` 用户不能生成语录；引用作者的隐私设置也会再次校验。Spoiler 文字被遮盖，剧透图片不会下载；匿名转发不会反查真实身份。已生成的语录不能再次套入语录。头像不可用时使用彩色占位。引用作者的其他 AI 回合或隐私操作正忙时，会立即提示稍后重试，不排队等待；此时尚未发送语录。发送结果未知时先检查聊天，不要立即重复操作。
+
+**English quick reference:** Reply with `/q`; use a Telegram text selection for an exact excerpt. `/q 3` quotes forward and `/q -3` backward, including the replied message (1–10 local messages). Add `r` for one parent preview and a color preset or `#RRGGBB` for a one-off theme. `/qcolor <color|reset>` persists the chat default; group changes require an administrator. Quotes respect privacy, protected content and topic boundaries. Long quotes are delivered as readable PNG documents. If an author is busy in another AI turn or privacy operation, the request fails promptly without sending; try again later.

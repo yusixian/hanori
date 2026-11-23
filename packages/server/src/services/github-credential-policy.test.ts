@@ -10,10 +10,10 @@ import {
 describe("GitHub credential policy", () => {
   it.each(["editor", "viewer"])("rejects a new legacy PAT from %s", (role) => {
     expect(() =>
-      assertGitHubCredentialUpdateAllowed(role, { login: "ai-chan" }, { token: "ghp_secret" }),
+      assertGitHubCredentialUpdateAllowed(role, { login: "hanori" }, { token: "ghp_secret" }),
     ).toThrow(HTTPException);
     try {
-      assertGitHubCredentialUpdateAllowed(role, { login: "ai-chan" }, { token: "ghp_secret" });
+      assertGitHubCredentialUpdateAllowed(role, { login: "hanori" }, { token: "ghp_secret" });
     } catch (error) {
       expect((error as HTTPException).status).toBe(403);
     }

@@ -58,17 +58,6 @@ The server's `createApp()` in `packages/server/src/app.ts` uses **chained** `.ro
 
 Commands live in `packages/bot/src/commands/`. Product metadata belongs in the shared `TELEGRAM_COMMAND_CATALOG`; runtime registration must go through `ActiveCommandRegistry` so actual registration, `/help`, and `setMyCommands` stay aligned. Admin commands use `createAuthGuard(adminIds)` from `packages/bot/src/guards/auth.ts`. The restart command uses a callback pattern: `config.onRestart?.()`, handled by BotManager in the server package.
 
-### Lark Webhook Bot
-
-项目支持 Lark/飞书自定义机器人（Webhook 推送模式）。核心实现在 `packages/server/src/services/` 下：
-
-- `lark-webhook-client.ts` — Webhook 客户端，支持签名校验（HmacSHA256）、发送文本/卡片消息
-- `lark-bot-manager.ts` — 生命周期管理（start/stop/restart），集成 DbLogger 和可选的邮件监控
-- `imap-email-monitor.ts` — IMAP 邮件监控，将邮件转发到 Lark 群
-- `email-parsers.ts` — 邮件内容解析，支持 GitHub PR（approved/changes_requested/commented/merged/opened/review_requested/pushed）、CI Run、Issue 三类邮件，自动生成对应 Lark 卡片
-
-Webhook 频率限制：100 次/分钟，5 次/秒，请求体 ≤ 20KB。安全配置支持签名校验、IP 白名单、自定义关键词三种方式。
-
 ### Logging & SSE
 
 `DbLogger` writes to both pino stdout and the `botLogs` database table. The panel receives real-time logs via SSE at `GET /api/logs/stream` using fetch + ReadableStream (not EventSource).
@@ -89,7 +78,7 @@ If format check fails, run `pnpm fmt` to auto-fix, then re-stage the changed fil
 
 ## CI
 
-`.github/workflows/ci.yml` runs lint, format check, typecheck, i18n check, unit tests (vitest) and browser tests (Playwright Chromium) on every push/PR to `main`. It runs on a **self-hosted runner** on the maintainer's Mac (`~/actions-runner/cos-tool-bot`, label `cos-tool-bot`) — if that runner is offline, CI jobs queue indefinitely. Start it with `cd ~/actions-runner/cos-tool-bot && ./svc.sh start`. See readme "CI / Self-hosted Runner".
+For CI checks, see [.github/workflows/ci.yml](.github/workflows/ci.yml). Pull requests run on GitHub-hosted Ubuntu runners.
 
 ## Conventions
 

@@ -38,6 +38,31 @@ it("marks denied image admissions as failed and correlates accepted tasks withou
 });
 
 describe("toToolLogValue", () => {
+  it("masks unregistered credentials on both sides of a tool call", async () => {
+    const payload = {
+      privateKey: "fixture-private-material",
+      headers: { "Proxy-Authorization": "Basic fixture-header" },
+      url: "https://api.telegram.org/file/bot123:fixture-token/document",
+      totalTokens: 12,
+    };
+    const onLog = vi.fn();
+    const tools = wrapToolsWithLogging(
+      { sample: { execute: async () => payload } as unknown as Tool },
+      { onLog },
+    );
+    await expect(
+      tools.sample!.execute!(payload, { toolCallId: "sample", messages: [] }),
+    ).resolves.toEqual(payload);
+    const safe = {
+      privateKey: "[REDACTED]",
+      headers: { "Proxy-Authorization": "[REDACTED]" },
+      url: "https://api.telegram.org/file/bot[REDACTED]/document",
+      totalTokens: 12,
+    };
+    expect(onLog.mock.calls[0]?.[0].meta.input).toEqual(safe);
+    expect(onLog.mock.calls[1]?.[0].meta.output).toEqual(safe);
+  });
+
   it("redacts known secrets before truncating strings and error diagnostics", () => {
     const secret = "fake-secret-123456";
     const text = "x".repeat(16_380) + secret + "y".repeat(100);

@@ -19,6 +19,7 @@ import { z } from "zod";
 import type { AuthVariables } from "../middleware/better-auth.js";
 import type { ImageGenerationService } from "../services/image-generation-service.js";
 import type { ImageMcpConnectionService } from "../services/image-mcp-connection-service.js";
+import type { ImageMcpPlatformService, ImageMcpProvider } from "../services/image-mcp-platform.js";
 import {
   normalizeTelegramChatSubjectQuery,
   searchTelegramChatSubjects,
@@ -180,7 +181,22 @@ export function governanceRoutes(
   imageService: ImageGenerationService,
   connectionService: ImageMcpConnectionService,
   connections?: Partial<Record<"mcp_openai" | "mcp_gemini", ImageMcpConnectionService>>,
+  platform?: ImageMcpPlatformService,
 ) {
+  const status = (provider: ImageMcpProvider) => {
+    const service = platform
+      ? platform.connection(provider)
+      : provider === "mcp_pixai"
+        ? connectionService
+        : connections?.[provider];
+    return (
+      service?.getStatus() ?? {
+        status: "disconnected" as const,
+        scopes: [],
+        lastError: "NOT_CONFIGURED",
+      }
+    );
+  };
   return new Hono<{ Variables: AuthVariables }>()
     .get("/:botId/governance", async (c) => {
       const botId = c.req.param("botId");
@@ -188,7 +204,7 @@ export function governanceRoutes(
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       const [config, connection, policies] = await Promise.all([
         imageService.getConfig(botId),
-        connectionService.getStatus(),
+        status("mcp_pixai"),
         db
           .select({
             resource: usageGovernancePolicies.resource,
@@ -205,8 +221,8 @@ export function governanceRoutes(
           ...config,
           connection,
           connections: {
-            mcp_openai: await connections?.mcp_openai?.getStatus(),
-            mcp_gemini: await connections?.mcp_gemini?.getStatus(),
+            mcp_openai: await status("mcp_openai"),
+            mcp_gemini: await status("mcp_gemini"),
           },
           limits: Object.entries(LIMIT_MAPPINGS).map(([key, mapping]) => {
             const configured = policies.find(
@@ -362,10 +378,10 @@ export function governanceRoutes(
           ok: true as const,
           data: {
             ...config,
-            connection: await connectionService.getStatus(),
+            connection: await status("mcp_pixai"),
             connections: {
-              mcp_openai: await connections?.mcp_openai?.getStatus(),
-              mcp_gemini: await connections?.mcp_gemini?.getStatus(),
+              mcp_openai: await status("mcp_openai"),
+              mcp_gemini: await status("mcp_gemini"),
             },
             limits: body.limits,
             overrides: body.overrides,

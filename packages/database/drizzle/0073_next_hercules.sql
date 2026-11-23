@@ -1,0 +1,1 @@
+ALTER TABLE "scheduled_tasks" ADD COLUMN "approved_by_user_id" bigint;

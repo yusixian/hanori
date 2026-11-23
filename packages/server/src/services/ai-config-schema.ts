@@ -14,6 +14,15 @@ import {
 } from "@cos-tool-bot/shared";
 import { z } from "zod";
 
+export const agentExecutionConfigSchema = z.object({
+  providerId: z.string().trim().min(1).optional(),
+  modelId: z.string().trim().min(1).optional(),
+  systemPrompt: z.string().optional(),
+  toolNames: z.array(z.string().trim().min(1)).optional(),
+  timeoutMs: z.number().int().min(1000).max(2_147_483_647).optional(),
+  maxSteps: z.number().int().min(1).max(MAX_SUB_AGENT_STEPS).optional(),
+});
+
 export function boundedNumberSchema(bounds: NumericSettingBounds) {
   const number = bounds.integer ? z.number().int() : z.number();
   return number.min(bounds.min).max(bounds.max);
@@ -89,8 +98,16 @@ export const engagementPolicySchema = z.object({
   timeoutMs: z.number().int().min(100).max(5_000),
 });
 
+export const modelRecoverySchema = z.object({
+  maxRetries: z.number().int().min(0).max(2),
+  fallback: z
+    .object({ providerId: z.string().trim().min(1), modelId: z.string().trim().min(1) })
+    .nullable(),
+});
+
 export const aiConfigSchema = z
   .object({
+    modelRecovery: modelRecoverySchema.optional(),
     revision: z.string().min(1).max(100),
     engagement: engagementPolicySchema
       .extend({ apiKey: z.string().trim().max(512).optional() })
@@ -107,6 +124,7 @@ export const aiConfigSchema = z
     groupOverrides: z.record(
       z.string(),
       z.object({
+        modelRecovery: modelRecoverySchema.nullable().optional(),
         chatId: z.number(),
         chatTitle: z.string().optional(),
         enabled: z.boolean().optional(),
@@ -119,9 +137,11 @@ export const aiConfigSchema = z
           AI_SETTING_BOUNDS.groupHistoryMaxTokens,
         ).optional(),
         imageGenerationEnabled: z.boolean().optional(),
+        imageGenerationConfirmation: z.enum(["always", "never"]).optional(),
         engagement: engagementPolicySchema.partial().nullable().optional(),
       }),
     ),
+    imageGenerationConfirmation: z.enum(["always", "never"]).default("always"),
     conversationConfig: z
       .object({
         enabled: z.boolean(),
@@ -230,6 +250,7 @@ export const aiConfigSchema = z
           .optional(),
       })
       .optional(),
+    taskAgentConfig: agentExecutionConfigSchema.optional(),
     agentToolsConfig: z
       .object({
         enabled: z.boolean(),
@@ -238,10 +259,7 @@ export const aiConfigSchema = z
         agents: z
           .record(
             z.string(),
-            z.object({
-              enabled: z.boolean().optional(),
-              systemPrompt: z.string().optional(),
-            }),
+            agentExecutionConfigSchema.extend({ enabled: z.boolean().optional() }),
           )
           .optional(),
       })

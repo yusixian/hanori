@@ -2,10 +2,11 @@ import { abortable } from "../../utils/abortable.js";
 import { lookup } from "node:dns/promises";
 import { createHash } from "node:crypto";
 import { open, unlink, type FileHandle } from "node:fs/promises";
-import { validateHeaderValue, type IncomingMessage } from "node:http";
+import { request as httpRequest, validateHeaderValue, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
 import { isAbsolute } from "node:path";
+import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 export type MediaHttpFailure =
   | "invalid_request"
@@ -120,7 +121,10 @@ function boundedInteger(value: number, min: number, max: number): number {
 }
 
 async function resolveAddress(url: URL, signal: AbortSignal) {
-  const addresses = await abortable(lookup(url.hostname, { all: true, verbatim: true }), signal);
+  const addresses = await abortable(
+    lookup(url.hostname.replace(/^\[|\]$/g, ""), { all: true, verbatim: true }),
+    signal,
+  );
   signal.throwIfAborted();
   if (!addresses.length || addresses.some(({ address }) => !isPublicMediaAddress(address)))
     throw new MediaHttpError("forbidden");
@@ -137,11 +141,11 @@ function requestPinned(
 ): Promise<IncomingMessage> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const request = httpsRequest(
+    const request = (url.protocol === "http:" ? httpRequest : httpsRequest)(
       {
         hostname: url.hostname,
         servername: url.hostname,
-        port: 443,
+        port: url.port || (url.protocol === "http:" ? 80 : 443),
         path: `${url.pathname}${url.search}`,
         method,
         agent: false,
@@ -307,6 +311,158 @@ async function withResponse<T>(
 /** Resolve a short URL without retaining its HTML, cookies or response headers. */
 export function resolveMediaUrl(input: string, policy: MediaHttpPolicy): Promise<string> {
   return withResponse(input, policy, undefined, async (_response, url) => url.href);
+}
+
+/** Public HTTP media sources, without a site allowlist. DNS is checked and pinned on every request. */
+export function publicMediaUrl(input: string): URL {
+  try {
+    if (typeof input !== "string" || input.length > 8192 || UNSAFE_URL_CHARACTERS.test(input))
+      throw new Error();
+    for (const character of input) {
+      if (character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) throw new Error();
+    }
+    const url = new URL(input);
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (
+      !["https:", "http:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      (isIP(host) ? !isPublicMediaAddress(host) : !HOST.test(host)) ||
+      host === "metadata.google.internal"
+    )
+      throw new Error();
+    return url;
+  } catch {
+    throw new MediaHttpError("invalid_request");
+  }
+}
+
+/** One extractor request. Redirects go back through this boundary, including fresh DNS checks.
+ * HTTP errors are returned to yt-dlp so its extractors can interpret login and availability.
+ */
+export async function readExtractorResponse(
+  input: string,
+  request: Record<string, unknown>,
+  signal: AbortSignal,
+  maxBytes = 8 * 1024 * 1024,
+  probeMedia = false,
+) {
+  const url = publicMediaUrl(input);
+  const method = request.method;
+  if (
+    !["GET", "POST", "HEAD"].includes(String(method)) ||
+    !request.headers ||
+    typeof request.headers !== "object" ||
+    Array.isArray(request.headers) ||
+    Object.keys(request.headers).length > 80 ||
+    (request.data !== null &&
+      (typeof request.data !== "string" ||
+        request.data.length > 2 * 1024 * 1024 ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(request.data)))
+  )
+    throw new MediaHttpError("invalid_request");
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (
+      !/^[a-zA-Z0-9!#$%&'*+.^_`|~-]+$/.test(key) ||
+      typeof value !== "string" ||
+      value.length > 16_384
+    )
+      throw new MediaHttpError("invalid_request");
+    const lower = key.toLowerCase();
+    if (
+      [
+        "host",
+        "connection",
+        "content-length",
+        "transfer-encoding",
+        "accept-encoding",
+        "proxy-authorization",
+        "proxy-connection",
+        "upgrade",
+        "te",
+        "trailer",
+      ].includes(lower)
+    )
+      continue;
+    try {
+      validateHeaderValue(key, value);
+    } catch {
+      throw new MediaHttpError("invalid_request");
+    }
+    headers[lower] = value;
+  }
+  if (url.protocol === "http:" && (headers.authorization || headers.cookie))
+    throw new MediaHttpError("forbidden");
+  const body = typeof request.data === "string" ? Buffer.from(request.data, "base64") : undefined;
+  if (body && method !== "POST") throw new MediaHttpError("invalid_request");
+  const combined = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+  let response: IncomingMessage | undefined;
+  try {
+    const address = await resolveAddress(url, combined);
+    response = await requestPinned(
+      url,
+      address,
+      {
+        ...headers,
+        "accept-encoding": "identity",
+        ...(body ? { "content-length": String(body.length) } : {}),
+      },
+      combined,
+      String(method),
+      body,
+    );
+    const encoding = response.headers["content-encoding"]?.toLowerCase();
+    if (encoding && !["identity", "gzip", "deflate", "br"].includes(encoding))
+      throw new MediaHttpError("invalid_content");
+    const mediaPrefix =
+      probeMedia &&
+      (!encoding || encoding === "identity") &&
+      /^(audio|video)\//i.test(response.headers["content-type"] ?? "");
+    const declared = declaredLength(
+      response,
+      method === "HEAD" || mediaPrefix ? Number.MAX_SAFE_INTEGER : maxBytes,
+    );
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of response) {
+      combined.throwIfAborted();
+      if (mediaPrefix) {
+        const prefix = Buffer.from(chunk).subarray(0, 1024 - size);
+        chunks.push(prefix);
+        size += prefix.length;
+        if (size >= 1024) break;
+        continue;
+      }
+      size += chunk.length;
+      if (size > maxBytes) throw new MediaHttpError("too_large");
+      chunks.push(Buffer.from(chunk));
+    }
+    combined.throwIfAborted();
+    if (method !== "HEAD" && !mediaPrefix && declared !== undefined && declared !== size)
+      throw new MediaHttpError("invalid_content");
+    let bytes = Buffer.concat(chunks, size);
+    const responseHeaders = { ...response.headers };
+    if (encoding && encoding !== "identity" && bytes.length) {
+      const decompress =
+        encoding === "gzip" ? gunzipSync : encoding === "br" ? brotliDecompressSync : inflateSync;
+      bytes = decompress(bytes, { maxOutputLength: maxBytes });
+      delete responseHeaders["content-encoding"];
+      responseHeaders["content-length"] = String(bytes.length);
+    }
+    return {
+      url: url.href,
+      status: response.statusCode ?? 502,
+      headers: responseHeaders,
+      data: bytes.toString("base64"),
+    };
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof MediaHttpError) throw error;
+    throw new MediaHttpError(combined.aborted ? "timeout" : "upstream_error");
+  } finally {
+    response?.destroy();
+  }
 }
 
 /** For bounded metadata/subtitle documents. Audio conversion runs in a network-free worker. */

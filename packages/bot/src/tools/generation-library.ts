@@ -5,6 +5,7 @@ import type {
   GenerationLibraryPort,
   PromptAssetType,
 } from "@cos-tool-bot/shared";
+import { GenerationLibraryError } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
@@ -180,10 +181,16 @@ export function createGenerationLibraryTools({
   if (!readOnly && getActor().isAdmin) {
     tools.save_prompt_asset = tool({
       description:
-        "仅供 Bot 管理员在明确要求保存或更新提示词资产时使用。更新必须提供已检索确认的 id；不得根据相似名称或内容自动合并。pinned 只是管理标记，是否自动注入由服务端设置决定。",
+        "仅供 Bot 管理员在明确要求保存或更新提示词资产时使用。新建时省略 id 或传 null；更新必须提供已检索确认的 id，不得猜测或根据相似名称自动合并。pinned 只是管理标记，是否自动注入由服务端设置决定。",
       inputSchema: zodToAiSchema(
         z.object({
-          id: z.number().int().positive().optional(),
+          id: z
+            .number()
+            .int()
+            .positive()
+            .nullable()
+            .optional()
+            .describe("新建时省略或传 null；更新时填写已确认的资产 id"),
           name: z.string().trim().min(1).max(160),
           type: assetTypeSchema,
           content: z.string().trim().min(1).max(8_000),
@@ -192,20 +199,28 @@ export function createGenerationLibraryTools({
           pinned: z.boolean().default(false),
         }),
       ),
-      execute: async ({ id, name, type, content, notes, safety, pinned }) => ({
-        asset: await port.saveAsset(
-          getActor(),
-          {
-            name,
-            type: type as PromptAssetType,
-            content,
-            notes,
-            safety: safety as AssetSafety,
-            pinned,
-          },
-          id,
-        ),
-      }),
+      execute: async ({ id, name, type, content, notes, safety, pinned }) => {
+        try {
+          const asset = await port.saveAsset(
+            getActor(),
+            { name, type, content, notes, safety, pinned },
+            id ?? undefined,
+          );
+          return { ok: true, action: id == null ? "created" : "updated", asset };
+        } catch (error) {
+          if (error instanceof GenerationLibraryError) {
+            return { ok: false, code: error.code, error: error.message, saveState: "not_saved" };
+          }
+          // Keep the original storage failure in redacted owner logs, not in the model response.
+          throw Object.assign(
+            new Error(
+              "Prompt asset storage failed (storage_error); save outcome is unknown. Search the asset library to verify before retrying, to avoid creating duplicates. Inspect the owner tool log for the storage cause.",
+              { cause: error },
+            ),
+            { code: "storage_error" },
+          );
+        }
+      },
     });
     tools.delete_prompt_asset = tool({
       description:

@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 PROJECT_NAME="cos-bot-dev"
-PUBLIC_ORIGIN="${COS_TOOL_BOT_MINI_APP_ORIGIN:-https://tg-test.example.invalid}"
+PUBLIC_ORIGIN="${COS_TOOL_BOT_MINI_APP_ORIGIN:-}"
 SERVER_PORT="${COS_TOOL_BOT_MINI_APP_SERVER_PORT:-43100}"
 PANEL_PORT="${COS_TOOL_BOT_MINI_APP_PANEL_PORT:-43103}"
 PERSISTENT_TUNNEL_CONFIG="$HOME/.cloudflared/cos-tool-bot-tg-test.yml"
@@ -162,6 +162,14 @@ cleanup() {
 start_environment() {
   local existing_pid existing_tunnels session_secret tunnel_command
 
+  if [[ -z "$PUBLIC_ORIGIN" && -f "$REPO_ROOT/.env" ]]; then
+    PUBLIC_ORIGIN="$(node -p 'require("node:util").parseEnv(require("node:fs").readFileSync(process.argv[1], "utf8")).COS_TOOL_BOT_MINI_APP_ORIGIN || ""' "$REPO_ROOT/.env")"
+  fi
+  [[ -n "$PUBLIC_ORIGIN" ]] || fail "请在 .env 中设置 COS_TOOL_BOT_MINI_APP_ORIGIN 为你的 HTTPS 域名。"
+
+  [[ "$PUBLIC_ORIGIN" =~ ^https://[^/@?#[:space:]]+$ ]] ||
+    fail "Mini App origin 必须是 HTTPS 域名，可选端口，不能包含路径或凭据。"
+
   command -v docker >/dev/null 2>&1 || fail "没有找到 docker。"
   command -v pnpm >/dev/null 2>&1 || fail "没有找到 pnpm。"
   command -v cloudflared >/dev/null 2>&1 || fail "没有找到 cloudflared。"
@@ -169,8 +177,6 @@ start_environment() {
   command -v openssl >/dev/null 2>&1 || fail "没有找到 openssl。"
   docker compose version >/dev/null 2>&1 || fail "没有找到 Docker Compose 插件。"
   [[ -f "$TUNNEL_CONFIG" ]] || fail "找不到 tunnel 配置：$TUNNEL_CONFIG"
-  [[ "$PUBLIC_ORIGIN" =~ ^https://[^/]+$ ]] ||
-    fail "Mini App origin 必须是无路径、无末尾斜杠的 HTTPS origin。"
   [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || fail "Server 端口必须是数字。"
   ((10#$SERVER_PORT >= 1 && 10#$SERVER_PORT <= 65535)) || fail "Server 端口超出有效范围。"
   [[ "$PANEL_PORT" =~ ^[0-9]+$ ]] || fail "Panel 端口必须是数字。"

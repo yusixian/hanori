@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { TaskAgentFields } from "./task-agent-fields";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -11,11 +14,14 @@ import { useTranslation } from "react-i18next";
 export function AgentToolsSection({
   config,
   onUpdate,
+  providers,
 }: {
   config: AgentToolsConfig;
+  providers: { id: string; label: string; defaultModel: string }[];
   onUpdate: (updates: Partial<AgentToolsConfig>) => void;
 }) {
   const { t } = useTranslation("aiSettings");
+  const [name, setName] = useState("");
 
   return (
     <Card>
@@ -63,6 +69,54 @@ export function AgentToolsSection({
             onChange={(e) => onUpdate({ maxSubAgentSteps: Number(e.target.value) })}
           />
           <p className="text-muted-foreground text-xs">{t("agentTools.maxStepsDescription")}</p>
+        </div>
+        <div className="space-y-4 border-t pt-4">
+          <h3 className="font-medium">{t("taskAgent.namedTitle")}</h3>
+          {Object.entries(config.agents ?? {}).map(([agentName, agent]) => (
+            <div key={agentName} className="space-y-4 rounded-lg border p-4">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="font-medium">{agentName}</h4>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    const agents = { ...config.agents };
+                    delete agents[agentName];
+                    onUpdate({ agents });
+                  }}
+                >
+                  {t("taskAgent.remove")}
+                </Button>
+              </div>
+              <TaskAgentFields
+                config={agent}
+                providers={providers}
+                onUpdate={(updates) =>
+                  onUpdate({ agents: { ...config.agents, [agentName]: { ...agent, ...updates } } })
+                }
+              />
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2">
+            <Input
+              aria-label={t("taskAgent.name")}
+              className="min-w-40 flex-1"
+              placeholder={t("taskAgent.name")}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!name.trim() || !!config.agents?.[name.trim()]}
+              onClick={() => {
+                onUpdate({ agents: { ...config.agents, [name.trim()]: { enabled: true } } });
+                setName("");
+              }}
+            >
+              {t("taskAgent.add")}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

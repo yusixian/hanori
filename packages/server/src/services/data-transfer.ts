@@ -14,7 +14,12 @@ const SENSITIVE_FIELDS: Record<string, (row: Record<string, unknown>) => Record<
   {
     bot_plugin_configs: sanitizePluginConfigTransfer,
     bots: (row) => {
-      const { encryptedToken: _encryptedToken, ...rest } = row;
+      const {
+        encryptedToken: _encryptedToken,
+        larkWebhookConfig: _retiredWebhook,
+        emailForwardConfig: _retiredMailbox,
+        ...rest
+      } = row;
       if (rest.aiConfig && typeof rest.aiConfig === "object") {
         rest.aiConfig = sanitizeAiConfig(rest.aiConfig as Record<string, unknown>);
       }
@@ -38,26 +43,25 @@ function sanitizePluginConfigTransfer(row: Record<string, unknown>): Record<stri
 }
 
 function sanitizeAiConfig(config: Record<string, unknown>): Record<string, unknown> {
-  const { encryptedApiKey: _encryptedApiKey, ...rest } = config;
-  if (rest.webToolsConfig && typeof rest.webToolsConfig === "object") {
-    const wtc = { ...(rest.webToolsConfig as Record<string, unknown>) };
-    if (wtc.search && typeof wtc.search === "object") {
-      const { apiKey: _searchApiKey, ...searchRest } = wtc.search as Record<string, unknown>;
-      wtc.search = searchRest;
-    }
-    if (wtc.imageGeneration && typeof wtc.imageGeneration === "object") {
-      const { apiKey: _imgApiKey, ...imgRest } = wtc.imageGeneration as Record<string, unknown>;
-      wtc.imageGeneration = imgRest;
-    }
-    rest.webToolsConfig = wtc;
+  const omitKeys = (value: Record<string, unknown>): Record<string, unknown> => {
+    const { apiKey: _apiKey, encryptedApiKey: _encryptedApiKey, ...settings } = value;
+    return settings;
+  };
+  const rest = omitKeys(config);
+  const withoutKeys = (value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? omitKeys(value as Record<string, unknown>)
+      : value;
+  if (Array.isArray(rest.providers)) rest.providers = rest.providers.map(withoutKeys);
+  for (const key of ["engagement", "embeddingConfig"]) {
+    if (rest[key]) rest[key] = withoutKeys(rest[key]);
   }
-  // Strip embedding API key
-  if (rest.embeddingConfig && typeof rest.embeddingConfig === "object") {
-    const { encryptedApiKey: _embApiKey, ...embRest } = rest.embeddingConfig as Record<
-      string,
-      unknown
-    >;
-    rest.embeddingConfig = embRest;
+  if (rest.webToolsConfig && typeof rest.webToolsConfig === "object") {
+    const settings = { ...(rest.webToolsConfig as Record<string, unknown>) };
+    for (const key of ["search", "imageGeneration"]) {
+      if (settings[key]) settings[key] = withoutKeys(settings[key]);
+    }
+    rest.webToolsConfig = settings;
   }
   if (rest.githubToolsConfig && typeof rest.githubToolsConfig === "object") {
     const {
@@ -299,7 +303,8 @@ export class DataTransferService {
   async exportBot(botId: string, excludeTables?: Set<string>): Promise<ExportPayload> {
     // Get bot record
     const [bot] = await this.db.select().from(schema.bots).where(eq(schema.bots.id, botId));
-    if (!bot) throw new Error(`Bot not found: ${botId}`);
+    if (!bot || (bot.platform && bot.platform !== "telegram"))
+      throw new Error(`Bot not found: ${botId}`);
 
     const botRow = this.sanitizeRow("bots", bot as unknown as Record<string, unknown>);
 
@@ -352,6 +357,8 @@ export class DataTransferService {
 
     const sourceBotIds = new Set<string>();
     for (const botData of payload.bots) {
+      if (botData.platform !== undefined && botData.platform !== "telegram")
+        throw new Error("Invalid export format: unsupported bot platform");
       const sourceBotId = botData.id;
       if (typeof sourceBotId !== "string" || sourceBotId.length === 0) {
         throw new Error("Invalid export format: bot id is missing");

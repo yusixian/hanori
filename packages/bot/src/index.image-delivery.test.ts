@@ -1,6 +1,7 @@
+import { tmpdir } from "node:os";
 import { Api, type ApiClientOptions } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { realpath, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NsfwChecker } from "./services/nsfw-checker.js";
@@ -156,7 +157,7 @@ describe("sendLocalImageFiles", () => {
 
 describe("one-shot image transport", () => {
   it("keeps topic and safety protection without inheriting autoRetry after a lost receipt", async () => {
-    const directory = await mkdtemp("/private/tmp/image-delivery-");
+    const directory = await mkdtemp(join(await realpath(tmpdir()), "image-delivery-"));
     const file = join(directory, "image.png");
     await writeFile(file, Buffer.from([1, 2, 3]));
     type Fetch = NonNullable<ApiClientOptions["fetch"]>;
@@ -188,7 +189,9 @@ describe("one-shot image transport", () => {
   it.each([1, 2])(
     "keeps a %i-image safety preparation failure retryable until files recover",
     async (count) => {
-      const directory = await mkdtemp("/private/tmp/image-delivery-preparation-");
+      const directory = await mkdtemp(
+        join(await realpath(tmpdir()), "image-delivery-preparation-"),
+      );
       const files = Array.from({ length: count }, (_, index) => join(directory, `${index}.png`));
       const checker = new NsfwChecker({ apiUrl: "" });
       vi.spyOn(checker, "checkImageBytes").mockResolvedValue({
@@ -247,7 +250,7 @@ describe("one-shot image transport", () => {
       fetch: fetch as ApiClientOptions["fetch"],
     });
     await expect(
-      sendLocalImageFiles(api, 42, ["/private/tmp/nonexistent-synthetic.png"], {
+      sendLocalImageFiles(api, 42, [join(tmpdir(), "nonexistent-synthetic.png")], {
         prompt: "cat",
         detailUrl: "https://example.com/task",
       }),
@@ -256,8 +259,8 @@ describe("one-shot image transport", () => {
   });
 });
 
-it("checks each album image on the one-shot client using the configured NSFW threshold", async () => {
-  const directory = await mkdtemp("/private/tmp/image-delivery-safety-");
+it("checks every album image and masks the whole batch at the configured NSFW threshold", async () => {
+  const directory = await mkdtemp(join(await realpath(tmpdir()), "image-delivery-safety-"));
   const files = [join(directory, "one.png"), join(directory, "two.png")];
   await writeFile(files[0]!, Buffer.from([1, 2, 3]));
   await writeFile(files[1]!, Buffer.from([4, 5, 6]));
@@ -284,7 +287,7 @@ it("checks each album image on the one-shot client using the configured NSFW thr
     expect(mediaPart).toBeDefined();
     expect(
       JSON.parse(mediaPart!).map((media: { has_spoiler: boolean }) => media.has_spoiler),
-    ).toEqual([true, false]);
+    ).toEqual([true, true]);
     return {
       json: async () => ({ ok: true, result: [{ message_id: 20 }, { message_id: 21 }] }),
     } as Awaited<ReturnType<Fetch>>;

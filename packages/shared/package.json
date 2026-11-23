@@ -23,7 +23,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/file-validation.ts src/file-reader.ts --format esm --dts",
+    "build": "tsdown src/index.ts src/file-validation.ts src/file-reader.ts --format esm --no-dts --sourcemap && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

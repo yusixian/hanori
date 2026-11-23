@@ -13,7 +13,7 @@ export default defineConfig({
     include: ["src/**/*.browser.test.tsx"],
     browser: {
       enabled: true,
-      provider: playwright(),
+      provider: playwright({ contextOptions: { timezoneId: "UTC" } }),
       instances: [{ browser: "chromium" }],
       headless: true,
     },

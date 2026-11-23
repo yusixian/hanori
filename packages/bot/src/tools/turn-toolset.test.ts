@@ -45,6 +45,18 @@ function promptFor(toolset: TurnToolset): string {
 }
 
 describe("turn toolset", () => {
+  it("offers quote tools only with a live renderer and personalization enabled", async () => {
+    const quotes = {
+      available: vi.fn(async () => true),
+    } as unknown as import("../services/quote-service.js").QuoteService;
+    const config = createToolsetConfig({ quotes });
+    expect((await assemble(reply(), { config })).tools.create_quote_sticker).toBeDefined();
+    expect(
+      (await assemble(reply(), { config, privacyMode: "off" })).tools.create_quote_sticker,
+    ).toBeUndefined();
+    vi.mocked(quotes.available).mockResolvedValue(false);
+    expect((await assemble(reply(), { config })).tools.create_quote_sticker).toBeUndefined();
+  });
   it("offers continuations exactly the reply families minus the declared reply-only tools", async () => {
     const replyNames = Object.keys((await assemble(reply())).tools);
     const continueNames = Object.keys((await assemble(continuation())).tools);
@@ -600,4 +612,32 @@ describe("trusted plugin turn binding", () => {
     ).rejects.toThrow("Duplicate search provider id");
     expect(bound.dispose).toHaveBeenCalledOnce();
   });
+});
+
+it("registers a current-topic summary callback without exposing actor or destination arguments", async () => {
+  const summarizeChat = vi.fn(async () => ({ ok: true, contentRaw: "summary" }));
+  const signal = new AbortController().signal;
+  const tools = await assemble(reply(), {
+    config: createToolsetConfig({ summarizeChat }),
+    chatId: -123,
+    threadId: 7,
+    userId: MEMBER_ID,
+    signal,
+  });
+  await run(tools.tools, "summarize_chat", {
+    instructions: "List decisions",
+    mode: { kind: "hours", hours: 2 },
+  });
+  expect(summarizeChat).toHaveBeenCalledWith({
+    chatId: -123,
+    threadId: 7,
+    userId: MEMBER_ID,
+    signal,
+    request: { instructions: "List decisions", mode: { kind: "hours", hours: 2 } },
+  });
+  const off = await assemble(reply(), {
+    config: createToolsetConfig({ summarizeChat }),
+    privacyMode: "off",
+  });
+  expect(off.tools.summarize_chat).toBeUndefined();
 });

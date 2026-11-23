@@ -13,7 +13,6 @@ export { isTimeoutError } from "./errors.js";
 export * from "./github.js";
 export * from "./image-ocr.js";
 export * from "./image-receipt.js";
-export * from "./lark.js";
 export * from "./logs.js";
 export * from "./mcp.js";
 export * from "./memory.js";
@@ -83,3 +82,10 @@ export * from "./media-transcript.js";
 export * from "./media-jobs.js";
 export * from "./asr-settings.js";
 export * from "./video-downloads.js";
+
+export * from "./scheduled-tasks.js";
+export * from "./prompt-versions.js";
+
+export * from "./quote.js";
+
+export { isDiagnosticCredentialKey, redactDiagnosticText } from "./diagnostic-credentials.js";

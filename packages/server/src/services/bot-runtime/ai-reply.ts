@@ -1,3 +1,4 @@
+import { readActivePromptSnapshot } from "../prompt-versions.js";
 import type {
   AiReplyBotConfig,
   AiSelectionCallbacks,
@@ -130,6 +131,11 @@ export async function assembleAiReply(
 
   const aiReply: AiReplyBotConfig = {
     botId,
+    getPromptSnapshot: () => readActivePromptSnapshot(services.db, botId),
+    scheduledTasks: services.scheduledTasks,
+    summarizeChat: services.summaryService
+      ? (input) => services.summaryService!.summarize({ ...input, botId })
+      : undefined,
     apiKey,
     baseURL: activeProvider.baseURL,
     model: aiConfig.activeModelId ?? activeProvider.defaultModel,
@@ -160,6 +166,7 @@ export async function assembleAiReply(
       }
     },
     groupOverrides: aiConfig.groupOverrides,
+    imageGenerationConfirmation: aiConfig.imageGenerationConfirmation ?? "always",
     conversationConfig: conversationCfg,
     conversation,
     memoryConfig: memoryCfg,
@@ -182,6 +189,7 @@ export async function assembleAiReply(
     botMemoryConfig: botMemoryCfg,
     botMemory,
     messageConfig: aiConfig.messageConfig,
+    modelRecovery: aiConfig.modelRecovery,
     executionConfig: aiConfig.executionConfig,
     imageOcrConfig: aiConfig.imageOcrConfig,
     timeoutConfig: runtimeTimeoutConfig,

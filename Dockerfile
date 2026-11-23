@@ -58,7 +58,7 @@ ENV NODE_ENV=production
 RUN corepack disable 2>/dev/null; rm -rf /root/.cache /tmp/*
 RUN apk add --no-cache ffmpeg git postgresql17-client && mkdir -p /data/backups /app/data /workspaces /git-metadata && chown node:node /workspaces /git-metadata
 
-# Pin yt-dlp separately from the application dependency graph.
+# Pin yt-dlp and its compatible YouTube EJS solver; the existing Node runtime executes challenges.
 COPY infrastructure/bilibili-ytdlp/requirements.txt /opt/bilibili-ytdlp/requirements.txt
 RUN apk add --no-cache python3 py3-pip \
   && python3 -m venv /opt/bilibili-ytdlp/venv \
@@ -128,6 +128,22 @@ COPY infrastructure/media-worker/server.mjs /opt/media-worker/server.mjs
 USER node
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "--max-old-space-size=128", "/opt/media-worker/server.mjs"]
+
+# Quote rendering receives only sanitized JSON over an isolated Unix socket.
+FROM node:22-alpine AS quote-worker
+RUN apk add --no-cache python3 py3-pip py3-cffi py3-pillow cairo pango fontconfig font-noto font-noto-cjk font-noto-emoji tini \
+  && python3 -m venv --system-site-packages /opt/quote-venv \
+  && mkdir -p /opt/quote-worker /opt/media-worker /quote-control
+COPY infrastructure/quote-worker/requirements.txt /opt/quote-worker/requirements.txt
+RUN /opt/quote-venv/bin/pip install --no-cache-dir -r /opt/quote-worker/requirements.txt \
+  && fc-cache -f
+COPY infrastructure/quote-worker/renderer.py infrastructure/quote-worker/server.mjs infrastructure/quote-worker/test_renderer.py /opt/quote-worker/
+RUN /opt/quote-venv/bin/python /opt/quote-worker/test_renderer.py
+COPY infrastructure/media-worker/server.mjs /opt/media-worker/server.mjs
+ENV QUOTE_PYTHON=/opt/quote-venv/bin/python
+USER node
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "--max-old-space-size=128", "/opt/quote-worker/server.mjs"]
 
 # Keep the existing default `docker build .` behavior on the main application image.
 FROM runner AS app

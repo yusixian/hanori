@@ -15,6 +15,27 @@ function run(tools: Record<string, Tool>, name: string, input: unknown) {
 }
 
 describe("reply_to_specific target validation", () => {
+  it("reports the delivered parent and topic for conversation persistence", async () => {
+    const onTextMessageSent = vi.fn();
+    const api = {
+      sendMessage: vi.fn().mockResolvedValue({
+        message_id: 9001,
+        reply_to_message: { message_id: 4902 },
+        is_topic_message: true,
+        message_thread_id: 77,
+      }),
+    } as unknown as Api;
+    const tools = createTelegramTools({
+      api,
+      chatId: -1001,
+      recentBotMessageIds: [],
+      getReplyableMessageIds: () => [4902],
+      onTextMessageSent,
+    });
+    await run(tools, "reply_to_specific", { reply_to_message_id: 4902, text: "Fictional reply" });
+    expect(onTextMessageSent).toHaveBeenCalledWith(9001, "Fictional reply", 4902, 77);
+  });
+
   it("refuses a message id the model never saw and lists the ids it may use", async () => {
     const api = { sendMessage: vi.fn() } as unknown as Api;
     const tools = createTelegramTools({

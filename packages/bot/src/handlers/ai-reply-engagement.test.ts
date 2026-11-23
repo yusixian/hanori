@@ -1,8 +1,11 @@
+import { beginTaskDiscussion, endTaskDiscussion } from "../services/task-discussion.js";
+import type { ScheduledTaskPort, ScheduledTaskRecord } from "@cos-tool-bot/shared";
 import { AiExecutionCoordinator } from "../services/ai-execution-coordinator.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
 import {
   ENGAGEMENT_MODEL,
   type EngagementSample,
+  type ConversationCallbacks,
   type UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -155,6 +158,193 @@ function streamResult(text = "answer") {
 }
 
 describe("AI engagement decisions", () => {
+  it("accepts configuration follow-ups before a plan card exists", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    const cfg = config("active");
+    cfg.scheduledTasks = {
+      getPendingDiscussion: vi.fn().mockResolvedValue(null),
+    } as unknown as ScheduledTaskPort;
+    const actor = {
+      botId: cfg.botId,
+      chatId: -100,
+      userId: 42,
+      userName: "Tester",
+      isAdmin: false,
+    };
+    beginTaskDiscussion(actor);
+    streamTextMock.mockImplementation(() => streamResult());
+    const runtime = createAiReplyHandler(cfg);
+    runtimes.push(runtime);
+    try {
+      await runtime.handler(context("每个月一号", { messageId: 1 }), vi.fn());
+      await runtime.handler(context("上午九点", { messageId: 2 }), vi.fn());
+      expect(streamTextMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.stringify(streamTextMock.mock.calls[1])).toContain("用户正在补充定时任务配置");
+    } finally {
+      endTaskDiscussion(actor);
+    }
+  });
+
+  it.each([true, false])(
+    "keeps task configuration responsive and records only actual topic identity (%s)",
+    async (isTopic) => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+      vi.stubGlobal("fetch", fetchMock);
+      const cfg = config("active");
+      cfg.scheduledTasks = {
+        getPendingDiscussion: vi.fn().mockResolvedValue({
+          id: "task-pending",
+          pendingVersion: 2,
+          pendingPlan: { name: "monthly" },
+        } as ScheduledTaskRecord),
+      } as unknown as ScheduledTaskPort;
+      const upsertUserMessage = vi.fn().mockResolvedValue({ id: 1 });
+      const addMessages = vi.fn();
+      cfg.conversation = {
+        getHistory: async () => ({ summary: null, messages: [] }),
+        addMessage: vi.fn(),
+        addMessages,
+        upsertUserMessage,
+        triggerCompression: vi.fn(),
+        clearHistory: vi.fn(),
+      };
+      cfg.messageConfig = {
+        replyMode: "segment",
+        richMessageEnabled: false,
+        autoSplitThreshold: 0,
+        splitDelayMs: 0,
+      };
+      streamTextMock.mockImplementation(() => streamResult());
+      const runtime = createAiReplyHandler(cfg);
+      runtimes.push(runtime);
+      const first = context("改成每月一次", { messageId: 1, threadId: 7 });
+      const second = context("周一发到本群", { messageId: 2, threadId: 7 });
+      if (isTopic) {
+        first.message!.is_topic_message = true;
+        second.message!.is_topic_message = true;
+      }
+      await runtime.handler(first, vi.fn());
+      await runtime.handler(second, vi.fn());
+      expect(upsertUserMessage.mock.calls[0]![0].meta.threadId).toBe(isTopic ? 7 : null);
+      const assistant = addMessages.mock.calls
+        .flatMap(([rows]) => rows)
+        .find((row) => row.role === "assistant");
+      expect(assistant.meta.threadId).toBe(isTopic ? 7 : null);
+      expect(assistant.meta).toHaveProperty("threadId");
+      expect(upsertUserMessage.mock.calls[0]![0].meta).toHaveProperty("threadId");
+      expect(streamTextMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.stringify(streamTextMock.mock.calls[1])).toContain("task-pending");
+    },
+  );
+
+  it("uses edited text in the next prompt and engagement context, including after handler restart", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => response("addressed"));
+    vi.stubGlobal("fetch", fetchMock);
+    const rows: Parameters<ConversationCallbacks["addMessages"]>[0] = [];
+    const conversation: ConversationCallbacks = {
+      getHistory: async () => ({
+        summary: null,
+        messages: rows
+          .filter((row) => row.role === "assistant")
+          .map((row) => ({
+            role: row.role,
+            content: row.content,
+            userName: null,
+            tgMessageId: row.meta?.["tgMessageId"] as number,
+          })),
+      }),
+      addMessage: async (row) => {
+        rows.push(row);
+      },
+      addMessages: async (batch) => {
+        rows.push(...batch);
+      },
+      findOwnMessage: async (chatId, messageId) =>
+        rows.some(
+          (row) =>
+            row.chatId === chatId &&
+            row.role === "assistant" &&
+            row.meta?.["tgMessageId"] === messageId,
+        ),
+      updateOwnMessage: async (chatId, messageId, content) => {
+        const row = rows.find(
+          (row) =>
+            row.chatId === chatId &&
+            row.role === "assistant" &&
+            row.meta?.["tgMessageId"] === messageId,
+        );
+        if (!row) throw new Error("missing history");
+        row.content = content;
+      },
+      triggerCompression: vi.fn(),
+      clearHistory: vi.fn(),
+    };
+    const runtimeConfig = config("active");
+    runtimeConfig.conversation = conversation;
+    runtimeConfig.messageConfig = {
+      replyMode: "segment",
+      richMessageEnabled: false,
+      autoSplitThreshold: 0,
+      splitDelayMs: 0,
+    };
+    const prompts: string[] = [];
+    const editResults: unknown[] = [];
+    let turn = 0;
+    streamTextMock.mockImplementation(
+      (options: {
+        messages: unknown[];
+        tools: Record<string, { execute: (input: unknown) => Promise<unknown> }>;
+      }) => {
+        prompts.push(JSON.stringify(options.messages));
+        const current = ++turn;
+        const result = streamResult(current === 1 ? "obsolete bot answer" : "done");
+        if (current === 2)
+          result.textStream = (async function* () {
+            editResults.push(
+              await options.tools.edit_own_message!.execute({
+                message_id: 20,
+                text: "corrected bot answer",
+              }),
+            );
+            yield "done";
+          })();
+        return result;
+      },
+    );
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+    const makeContext = (messageId: number) => {
+      const ctx = context("please answer", { messageId });
+      ctx.wait = vi.fn().mockResolvedValue(30);
+      ctx.api.editMessageText = vi.fn().mockResolvedValue({ message_id: 20 });
+      vi.mocked(ctx.resolveWait).mockResolvedValue(messageId === 1 ? 20 : messageId + 20);
+      return ctx;
+    };
+    await runtime.handler(makeContext(1), vi.fn());
+    await runtime.handler(makeContext(2), vi.fn());
+    await runtime.handler(makeContext(3), vi.fn());
+    expect(editResults).toEqual([{ success: true, history_synced: true }]);
+    expect(turn).toBe(3);
+    expect(prompts[1]).toContain("#20");
+    expect(prompts[2]).toContain("corrected bot answer");
+    expect(prompts[2]).not.toContain("obsolete bot answer");
+    const gate = String(fetchMock.mock.calls[2]?.[1]?.body);
+    expect(gate).toContain("corrected bot answer");
+    expect(gate).not.toContain("obsolete bot answer");
+    await runtime.destroy();
+    runtimes.splice(runtimes.indexOf(runtime), 1);
+    const restarted = createAiReplyHandler(runtimeConfig);
+    runtimes.push(restarted);
+    await restarted.handler(makeContext(4), vi.fn());
+    expect(prompts[3]).toContain("#20");
+    expect(prompts[3]).toContain("corrected bot answer");
+    expect(prompts[3]).not.toContain("obsolete bot answer");
+    streamTextMock.mockReset();
+  });
+
   it("sends the bot identity and effective group trigger words to the gate", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
     vi.stubGlobal("fetch", fetchMock);

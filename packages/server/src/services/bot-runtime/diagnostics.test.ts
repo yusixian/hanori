@@ -82,6 +82,11 @@ describe("runtime diagnostics assembly", () => {
       version: "a".repeat(40),
       environment: "production",
       telegramMode: "polling",
+      observationCapabilities: {
+        model: { status: "not_implemented", reason: "active_probe_not_configured" },
+        telegram: { status: "not_implemented", reason: "active_probe_not_configured" },
+        githubTasks: { status: "not_implemented", reason: "task_reader_not_connected" },
+      },
       activeTimers: 1,
       imageTasks: { states: { running: 2, unknown: 1 } },
       rss: { activeCollections: 3, lastDigestAt: Date.parse("2026-10-01T00:00:00Z") },
@@ -153,7 +158,7 @@ describe("runtime diagnostics assembly", () => {
 it("bounds configurable retention and marks empty history as current-process evidence", async () => {
   expect(diagnosticRetentionMs("7200000")).toBe(7_200_000);
   for (const invalid of [undefined, "", "NaN", "0", "86400001"])
-    expect(diagnosticRetentionMs(invalid)).toBe(3_600_000);
+    expect(diagnosticRetentionMs(invalid)).toBe(86_400_000);
   vi.stubEnv("RUNTIME_DIAGNOSTIC_RETENTION_MS", "7200000");
   const { diagnostics } = setup();
   await expect(diagnostics.query(actor, { operation: "get_request_trace" })).resolves.toMatchObject(

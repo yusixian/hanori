@@ -67,7 +67,7 @@ export function createGitHubCodeCallbacks(
     ? {
         runTask: async (input, model, signal) => {
           const token = await githubToolsConfig.tokenProvider!();
-          if (!token) throw new Error("Ai-chan's GitHub credential is not configured");
+          if (!token) throw new Error("The bot's GitHub credential is not configured");
           return services.gitWorkspaceService!.runCodeTask(
             {
               ...input,
@@ -82,7 +82,7 @@ export function createGitHubCodeCallbacks(
         },
         previewPush: async (repository, branch, signal) => {
           const token = await githubToolsConfig.tokenProvider!();
-          if (!token) throw new Error("Ai-chan's GitHub credential is not configured");
+          if (!token) throw new Error("The bot's GitHub credential is not configured");
           return services.gitWorkspaceService!.previewPush(
             {
               botId,
@@ -95,7 +95,7 @@ export function createGitHubCodeCallbacks(
         },
         pushBranch: async (repository, branch, expectedCommitSha, signal) => {
           const token = await githubToolsConfig.tokenProvider!();
-          if (!token) throw new Error("Ai-chan's GitHub credential is not configured");
+          if (!token) throw new Error("The bot's GitHub credential is not configured");
           return services.gitWorkspaceService!.pushBranch(
             {
               botId,

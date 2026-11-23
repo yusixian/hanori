@@ -18,13 +18,13 @@ describe("buildExtendedToolsPrompt", () => {
   it("states the configured timer ceiling", () => {
     const prompt = buildExtendedToolsPrompt(promptOptions({ timerMaxSeconds: 604_800 }));
 
-    expect(prompt).toContain("单个定时器最长 604800 秒");
+    expect(prompt).toContain("没有一天或七天上限");
     expect(prompt).not.toContain("86400");
   });
 
   it("states the default ceiling when the Bot keeps it", () => {
     const prompt = buildExtendedToolsPrompt(promptOptions());
 
-    expect(prompt).toContain("单个定时器最长 86400 秒");
+    expect(prompt).toContain("没有一天或七天上限");
   });
 });

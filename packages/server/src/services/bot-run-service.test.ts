@@ -515,17 +515,19 @@ describe("BotRunService", () => {
     expect(state.runs[0]?.["source"]).toBe("replay");
   });
 
-  it("extracts text from Telegram and Lark native events", async () => {
+  it("extracts Telegram text and rejects retired channels", async () => {
     const { db, state } = fakeDb();
     const service = new BotRunService(db, encryptionKey, (() => fakeResult([], "ok")) as never);
     await service.start(String(state.bots[0]?.["id"]), {
       channelEvent: { message: { text: "telegram text" } },
     });
-    await service.start(String(state.bots[0]?.["id"]), {
-      channel: "lark-webhook",
-      channelEvent: { event: { message: { content: JSON.stringify({ text: "lark text" }) } } },
-    });
-    expect(state.runs).toHaveLength(2);
+    await expect(
+      service.start(String(state.bots[0]?.["id"]), {
+        channel: "lark-webhook",
+        channelEvent: { event: { message: { content: JSON.stringify({ text: "lark text" }) } } },
+      }),
+    ).rejects.toThrow("Unsupported channel");
+    expect(state.runs).toHaveLength(1);
   });
 
   it("supports list, detail, event cursors, pinning, and cancellation APIs", async () => {

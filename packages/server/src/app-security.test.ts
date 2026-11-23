@@ -81,7 +81,9 @@ function createRoleApp(role: string, onSession?: () => void) {
     timerRegistry: {} as never,
     rssFeedService: {} as never,
     mcpClientManager: {} as never,
-    summaryService: {} as never,
+    summaryService: {
+      summarize: vi.fn(async () => ({ ok: true, contentRaw: "preview" })),
+    } as never,
     summaryConfigService: {} as never,
     githubAppService: {} as never,
     miniAppSessionSecret: "x".repeat(32),
@@ -129,6 +131,40 @@ describe("production HTTP policy", () => {
       ]) {
         expect((await createRoleApp(role).request(url!, { method })).status).toBe(403);
       }
+    },
+  );
+
+  it.each(["viewer", "editor"])("rejects %s prompt version reads and mutations", async (role) => {
+    for (const [path, method] of [
+      ["", "GET"],
+      ["/working", "GET"],
+      ["/version-id", "GET"],
+      ["", "POST"],
+      ["/preview", "POST"],
+      ["/activate", "POST"],
+      ["/version-id", "DELETE"],
+    ]) {
+      expect(
+        (
+          await createRoleApp(role).request(`/api/bots/${TEST_BOT_ID}/prompt-versions${path}`, {
+            method,
+          })
+        ).status,
+      ).toBe(403);
+    }
+  });
+  it.each(["owner", "admin"])(
+    "allows %s through prompt version authorization to validation",
+    async (role) => {
+      const result = await createRoleApp(role).request(
+        `/api/bots/${TEST_BOT_ID}/prompt-versions/activate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: "invalid" }),
+        },
+      );
+      expect(result.status).toBe(400);
     },
   );
 
@@ -198,6 +234,22 @@ describe("production HTTP policy", () => {
     await expect(ownerHarness.json()).resolves.toMatchObject({ ok: true, enabled: false });
     const adminHarness = await createRoleApp("admin").request("/api/harness/admin/overview");
     expect(adminHarness.status).toBe(403);
+  });
+
+  it.each(["admin", "editor", "viewer"])(
+    "restricts shared image MCP platform settings to the owner (%s)",
+    async (role) => {
+      for (const method of ["GET", "PUT"]) {
+        const response = await createRoleApp(role).request("/api/image-mcp-platform", { method });
+        expect(response.status).toBe(403);
+      }
+    },
+  );
+
+  it("allows the owner through the platform boundary", async () => {
+    const response = await createRoleApp("owner").request("/api/image-mcp-platform");
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ ok: false, error: "unavailable" });
   });
 
   it("isolates Telegram framing and SDK permissions to Mini App HTML routes", () => {
@@ -324,6 +376,79 @@ describe("production HTTP policy", () => {
       version: TEST_SHA,
     });
   });
+  it.each([true, false, "failure"])(
+    "reports optional renderer health %s without making the app unready",
+    async (rendererState) => {
+      const runtimeHealth = new RuntimeHealth(TEST_SHA);
+      const app = createApp({
+        db: {} as never,
+        auth: { handler: vi.fn() } as never,
+        baseURL: "https://bot.example.test",
+        botPool: { getGenerationLibraryService: () => ({}) } as never,
+        encryptionKey: "test-key",
+        backupService: {} as never,
+        modelCapabilityService: {} as never,
+        timerRegistry: {} as never,
+        rssFeedService: {} as never,
+        mcpClientManager: {} as never,
+        summaryService: {} as never,
+        summaryConfigService: {} as never,
+        githubAppService: {} as never,
+        miniAppSessionSecret: "x".repeat(32),
+        telegramDirectoryService: {} as never,
+        telegramMembershipVerifier: {} as never,
+        miniAppAccessService: {} as never,
+        groupConfigService: {} as never,
+        chatAiSelectionService: {} as never,
+        botLifecycleService: {} as never,
+        botSettingsService: {} as never,
+        imageGenerationService: {} as never,
+        imageMcpConnectionService: {} as never,
+        usageGovernor: {} as never,
+        runtimeHealth,
+        quoteRenderer: {
+          available: vi.fn(async () => {
+            if (rendererState === "failure") throw new Error("offline");
+            return rendererState === true;
+          }),
+        },
+      });
+
+      await expect((await app.request("/api/health")).json()).resolves.toEqual({ ok: true });
+      await expect((await app.request("/api/health/live")).json()).resolves.toEqual({
+        ok: true,
+        status: "live",
+        version: TEST_SHA,
+      });
+
+      const starting = await app.request("/api/health/ready");
+      expect(starting.status).toBe(503);
+      await expect(starting.json()).resolves.toEqual({
+        ok: false,
+        status: "starting",
+        version: TEST_SHA,
+      });
+
+      runtimeHealth.markReady();
+      const ready = await app.request("/api/health/ready");
+      expect(ready.status).toBe(200);
+      await expect(ready.json()).resolves.toEqual({
+        ok: true,
+        status: "ready",
+        version: TEST_SHA,
+        quoteRenderer: rendererState === true,
+      });
+
+      runtimeHealth.markStopping();
+      const stopping = await app.request("/api/health/ready");
+      expect(stopping.status).toBe(503);
+      await expect(stopping.json()).resolves.toEqual({
+        ok: false,
+        status: "stopping",
+        version: TEST_SHA,
+      });
+    },
+  );
 });
 
 it.each([
@@ -351,4 +476,39 @@ it.each([
   const response = await app.fetch(request);
   expect(authenticated).toBe(true);
   expect(response.status).toBe(path === "/api/logs/stream" ? 499 : 403);
+});
+
+it.each(["admin", "member"])(
+  "rejects %s at the owner-only summary preview boundary",
+  async (role) => {
+    const response = await createRoleApp(role).request(`/api/bots/${TEST_BOT_ID}/summary/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chatId: -1,
+        since: "2026-01-01T00:00:00Z",
+        until: "2026-01-02T00:00:00Z",
+        maxMessages: 1000,
+      }),
+    });
+    expect(response.status).toBe(403);
+  },
+);
+
+it("allows an authenticated owner to preview without a production sender", async () => {
+  const response = await createRoleApp("owner").request(
+    `/api/bots/${TEST_BOT_ID}/summary/preview`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chatId: -1,
+        since: "2026-01-01T00:00:00Z",
+        until: "2026-01-02T00:00:00Z",
+        maxMessages: 1000,
+      }),
+    },
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ok: true, data: { ok: true, contentRaw: "preview" } });
 });

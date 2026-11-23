@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -9,7 +9,7 @@ import { createStorageProvider } from "./storage/index.js";
 
 vi.mock("./storage/index.js", () => ({ createStorageProvider: vi.fn() }));
 
-const state = vi.hoisted(() => ({ script: "", missing: false, outputDirectory: "" }));
+const state = vi.hoisted(() => ({ script: "", missing: false, failWrite: false }));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return {
@@ -34,12 +34,17 @@ vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
-    createWriteStream: (path: string) => actual.createWriteStream(state.outputDirectory || path),
+    createWriteStream: (...args: Parameters<typeof actual.createWriteStream>) => {
+      const stream = actual.createWriteStream(...args);
+      if (state.failWrite)
+        stream.once("pipe", () => stream.destroy(new Error("simulated write failure")));
+      return stream;
+    },
   };
 });
 
 const directories: string[] = [];
-async function fixture() {
+async function fixture(databaseUrl = "postgres://synthetic") {
   const backupDir = await mkdtemp(join(tmpdir(), "backup-lifecycle-"));
   directories.push(backupDir);
   const records: Array<Record<string, unknown>> = [];
@@ -59,7 +64,7 @@ async function fixture() {
   const logger = { warn: vi.fn(), error: vi.fn() };
   const service = new BackupService({
     db: db as never,
-    databaseUrl: "postgres://synthetic",
+    databaseUrl,
     backupDir,
     encryptionKey: "synthetic",
     logger: logger as never,
@@ -85,7 +90,7 @@ afterEach(async () => {
   vi.mocked(createStorageProvider).mockReset();
   state.script = "";
   state.missing = false;
-  state.outputDirectory = "";
+  state.failWrite = false;
   await Promise.all(
     directories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
@@ -101,6 +106,58 @@ describe("backup dump lifecycle", () => {
     expect(record.status).toBe("completed");
     expect(record.sizeBytes).toBe(compressed.length);
     expect(records).toHaveLength(1);
+  });
+
+  it("uses private files and keeps credentials out of the dump process arguments and environment", async () => {
+    const { service, backupDir } = await fixture(
+      "postgresql://user:fixture%40%3A%5C@db:5432/app?sslmode=require",
+    );
+    state.script = `const fs = require("node:fs"); process.stdout.write(JSON.stringify({
+      value: fs.readFileSync(process.env.PGPASSFILE, "utf8"),
+      mode: fs.statSync(process.env.PGPASSFILE).mode & 0o777,
+    }));`;
+    const record = await service.createBackup();
+    const path = join(backupDir, record.filename);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(gunzipSync(await readFile(path)).toString())).toEqual({
+      mode: 0o600,
+      value: "*:*:*:*:fixture@\\:\\\\\n",
+    });
+    const [, args, options] = vi.mocked(spawn).mock.calls[0]!;
+    expect(args).toContain("postgresql://user@db:5432/app?sslmode=require");
+    const env = (options as { env: NodeJS.ProcessEnv }).env;
+    expect(JSON.stringify([args, env])).not.toContain("fixture");
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.DB_PASSWORD).toBeUndefined();
+    await expect(stat(env.PGPASSFILE!)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("removes temporary query-string credentials even when a dump fails", async () => {
+    const { service } = await fixture(
+      "postgresql://user:first@host-a,host-b/app?password=second&application_name=backup",
+    );
+    state.script = "process.exit(2)";
+    await expect(service.createBackup()).rejects.toThrow("pg_dump exited with code 2");
+    const [, args, options] = vi.mocked(spawn).mock.calls[0]!;
+    expect(args).toContain("postgresql://user@host-a,host-b/app?application_name=backup");
+    const env = (options as { env: NodeJS.ProcessEnv }).env;
+    await expect(stat(env.PGPASSFILE!)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves an existing destination when a backup filename collides", async () => {
+    const { service, backupDir } = await fixture();
+    const now = new Date("2025-01-01T00:00:00Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(now);
+      const path = join(backupDir, "cos-tool-bot_2025-01-01T00-00-00-000Z.sql.gz");
+      await writeFile(path, "existing backup");
+      await expect(service.createBackup()).rejects.toThrow(/EEXIST/);
+      expect(await readFile(path, "utf8")).toBe("existing backup");
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("removes the incomplete archive after a failed dump", async () => {
@@ -122,8 +179,8 @@ describe("backup dump lifecycle", () => {
   });
 
   it("reaps the dump process before reporting a destination failure", async () => {
-    const { service, backupDir } = await fixture();
-    state.outputDirectory = backupDir;
+    const { service } = await fixture();
+    state.failWrite = true;
     state.script = 'setInterval(() => process.stdout.write("SQL"), 100)';
     await expect(service.createBackup()).rejects.toThrow();
     const { execFile } = await import("node:child_process");
@@ -162,13 +219,36 @@ it.each([false, true])(
     expect(gunzipSync(await readFile(join(backupDir, record.filename))).toString()).toBe(
       "valid backup",
     );
-    expect(record.error).toBe(remoteFailure ? "Remote upload failed: remote unavailable" : null);
+    expect(record.error).toBe(remoteFailure ? "Remote upload failed" : null);
+    expect(records[0]?.error).toBe(record.error);
     expect(logger.warn).toHaveBeenCalledWith(
       { err: cleanupError },
       "Failed to clean up old backups",
     );
   },
 );
+
+it("masks historical WebDAV locations and server error bodies when listing backups", async () => {
+  const row = {
+    id: 1,
+    status: "completed",
+    createdAt: new Date(),
+    remoteProvider: "webdav",
+    remoteUrl: "https://user:fixture@storage.test/backup.gz?token=fixture#fixture",
+    error: "Remote upload failed: WebDAV upload failed (403): fixture",
+  };
+  const db = { select: () => ({ from: () => ({ orderBy: async () => [row] }) }) };
+  const service = new BackupService({
+    db: db as never,
+    databaseUrl: "",
+    backupDir: "",
+    encryptionKey: "",
+    logger: {} as never,
+  });
+  const [record] = await service.listBackups();
+  expect(record?.remoteUrl).toBe("https://storage.test/backup.gz");
+  expect(record?.error).toBe("Remote upload failed: WebDAV upload failed (403)");
+});
 
 it("keeps successful remote upload metadata on the shared completion path", async () => {
   const { service, records } = await fixture();

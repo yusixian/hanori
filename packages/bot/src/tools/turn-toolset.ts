@@ -1,9 +1,16 @@
+import { createQuoteTools } from "./quote.js";
+import type { QuoteService } from "../services/quote-service.js";
+import type { QuoteSource } from "@cos-tool-bot/shared";
+import { createSummaryTools } from "./summary.js";
+import type { ChatSummaryCallback, ScheduledTaskPort } from "@cos-tool-bot/shared";
+import { createScheduledTaskTools } from "./scheduled-tasks.js";
 import type { PluginActor, PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import { createPluginTools } from "./plugins.js";
 import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
 import { createRuntimeDiagnosticTools } from "./runtime-diagnostics.js";
 import type {
   ArtworkToolsConfig,
+  AiGroupOverride,
   BotLogEntry,
   BotMemoryCallbacks,
   BotMemoryConfig,
@@ -60,6 +67,9 @@ const MAX_TIMER_CHAIN_DEPTH = 2;
 
 /** Bot configuration and long-lived ports a turn's tools are bound from. */
 export interface TurnToolsetConfig {
+  quotes?: QuoteService;
+  scheduledTasks?: ScheduledTaskPort;
+  summarizeChat?: ChatSummaryCallback;
   botId: string;
   runtimeDiagnostics?: RuntimeDiagnosticsPort;
   adminIds?: number[];
@@ -78,6 +88,8 @@ export interface TurnToolsetConfig {
   skills?: readonly BotSkillDefinition[];
   generationLibraryPort?: GenerationLibraryPort;
   imageGenerationPort?: ImageGenerationPort;
+  imageGenerationConfirmation?: "always" | "never";
+  groupOverrides?: Record<string, AiGroupOverride>;
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
   rssCallbacks?: Omit<
     RssToolsOptions,
@@ -102,7 +114,10 @@ export interface ReplyTurn {
   preserveQueuedMessage: boolean;
   stickerCache: Map<string, string[]>;
   mcp?: McpToolsOptions;
-  github?: Pick<GitHubToolsOptions, "config" | "codeCallbacks" | "codingModel" | "issueProposals">;
+  github?: Pick<
+    GitHubToolsOptions,
+    "config" | "codeCallbacks" | "codingModel" | "issueProposals" | "threadId"
+  >;
 }
 
 export interface ContinueTurn {
@@ -120,6 +135,7 @@ export interface TurnInteractionInput {
 }
 
 export interface TurnToolsetInput {
+  quoteSources?: readonly QuoteSource[];
   threadId?: number;
   currentTraceId?: string;
   signal?: AbortSignal;
@@ -127,6 +143,7 @@ export interface TurnToolsetInput {
   chatId: number;
   isPrivate: boolean;
   userId?: number;
+  userName?: string;
   privacyMode?: UserPrivacyMode;
   /** From resolveImageGenerationActor; image tools need both this actor and the port. */
   imageGenerationActor: ImageGenerationActor | undefined;
@@ -173,7 +190,12 @@ function resolveMemoryWritePolicy(entry: ReplyTurn | ContinueTurn): MemoryWriteP
 export async function resolveImageGenerationActor(
   config: Pick<
     TurnToolsetConfig,
-    "botId" | "adminIds" | "imageGenerationPort" | "isDelegatedGroupAdmin"
+    | "botId"
+    | "adminIds"
+    | "imageGenerationPort"
+    | "isDelegatedGroupAdmin"
+    | "imageGenerationConfirmation"
+    | "groupOverrides"
   >,
   scope: { chatId: number; isPrivate: boolean; userId?: number },
 ): Promise<ImageGenerationActor | undefined> {
@@ -184,6 +206,10 @@ export async function resolveImageGenerationActor(
     !isPrivate && !isBotAdmin
       ? (await config.isDelegatedGroupAdmin?.(chatId, userId)) === true
       : false;
+  const imageConfirmationPolicy =
+    config.groupOverrides?.[String(chatId)]?.imageGenerationConfirmation ??
+    config.imageGenerationConfirmation ??
+    "always";
   return {
     botId: config.botId,
     chatId,
@@ -191,6 +217,7 @@ export async function resolveImageGenerationActor(
     chatType: isPrivate ? "private" : "supergroup",
     isBotAdmin,
     isDelegatedGroupAdmin,
+    ...(imageConfirmationPolicy === "always" ? {} : { imageConfirmationPolicy }),
   };
 }
 
@@ -208,7 +235,6 @@ function createReplyGitHubTools(
     userId: input.userId,
     chatId: input.chatId,
     api: input.api,
-    threadId: input.threadId,
     pendingActions: input.config.pendingAdminActions,
   });
 }
@@ -253,12 +279,35 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     config.unifiedSearchEnabled === true,
   );
 
+  const taskActor =
+    userId === undefined
+      ? undefined
+      : {
+          botId: config.botId,
+          chatId,
+          userId,
+          userName: input.userName,
+          threadId: input.threadId,
+          isBotAdmin: isAdmin,
+          isAdmin:
+            isAdmin ||
+            (!input.isPrivate && (await config.isDelegatedGroupAdmin?.(chatId, userId)) === true),
+        };
+  const scheduledTools =
+    personalized && config.scheduledTasks && taskActor
+      ? createScheduledTaskTools({ api, port: config.scheduledTasks, getActor: () => taskActor })
+      : {};
   const { telegramTools, behaviorTools, artworkTools } = createTurnInteractionTools({
     api,
     chatId,
     recentBotMessageIds: input.interaction.recentBotMessageIds,
     onceGuard: input.interaction.onceGuard,
-    telegram: { ...input.interaction.telegram, userId },
+    telegram: {
+      ...input.interaction.telegram,
+      userId,
+      scheduledTasks: config.scheduledTasks,
+      scheduledTaskActor: taskActor,
+    },
     behavior: {
       ...input.interaction.behavior,
       richMessageEnabled: isRichMessageEnabled(config.messageConfig),
@@ -290,6 +339,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     config.imageGenerationPort && imageActor
       ? await createImageGenerationTools({
           port: config.imageGenerationPort,
+          api,
           getActor: () => ({
             ...imageActor,
             requestContext: {
@@ -316,7 +366,32 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
         config.plugins!.createSession({ ...pluginActor, readOnly: true }, signal)
     : undefined;
 
+  const quoteTools =
+    config.quotes && personalized && userId !== undefined && (await config.quotes.available())
+      ? createQuoteTools(config.quotes, {
+          chatId,
+          threadId: input.threadId,
+          userId,
+          sources: input.quoteSources,
+          visibleIds: input.interaction.telegram.getReplyableMessageIds ?? (() => []),
+          onceGuard: input.interaction.onceGuard,
+          signal: input.signal,
+          replyToMessageId: entry.kind === "reply" ? entry.message.id : undefined,
+          onSent: (id) => input.interaction.recentBotMessageIds.push(id),
+        })
+      : {};
+
   const tools: Record<string, Tool> = {
+    ...quoteTools,
+    ...scheduledTools,
+    ...(input.privacyMode === "normal" && config.summarizeChat && userId !== undefined
+      ? createSummaryTools(config.summarizeChat, {
+          chatId,
+          threadId: input.threadId,
+          userId,
+          signal: input.signal,
+        })
+      : {}),
     ...(entry.kind === "reply" && isAdmin && userId !== undefined && config.runtimeDiagnostics
       ? createRuntimeDiagnosticTools({
           port: config.runtimeDiagnostics,
@@ -360,6 +435,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     ...(config.dataFiles
       ? createFileTools({
           dataDir: config.dataFiles.dataDir,
+          snapshotFiles: config.dataFiles.snapshotFiles,
           protectedFiles: config.dataFiles.injectableFiles,
         })
       : {}),

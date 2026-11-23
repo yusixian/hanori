@@ -10,7 +10,7 @@
 
 Dokploy 直接使用仓库中的 `docker-compose.yml`；旧服务器继续由 `docker-compose.direct.yml` 和原更新脚本管理。完整的新服务器准备、原域名切换、数据库与文件卷迁移、S3 备份、验收和回滚步骤见 [Dokploy 新服务器迁移部署教程](DOKPLOY_DEPLOYMENT.md)。
 
-基础 Compose 不发布 app、数据库、NSFW 或 worker 主机端口。Dokploy Advanced Command 必须在默认命令末尾追加 `--force-recreate`，确保每次完整部署都重新运行 `db-backup`；app 容器则使用 `/api/health/ready` 判断迁移、认证、MCP 与 Bot 启动是否完成。启用 Pi worker 时只需设置 `COMPOSE_PROFILES=coding`。
+基础 Compose 不发布 app、数据库、NSFW 或 worker 主机端口。Dokploy Advanced Command 保留默认的 `up -d --build --remove-orphans`，移除旧配置中的全栈 `--force-recreate`，避免日常应用更新重建数据库。完整 `up` 会重新启动已退出的 `db-backup`，app 仍等待本次备份成功后启动；再用 `/api/health/ready` 判断迁移、认证、MCP 与 Bot 是否就绪。具体命令和验收见 [Dokploy 部署指南](DOKPLOY_DEPLOYMENT.md) 的 Advanced Command 说明。启用 Pi worker 时只需设置 `COMPOSE_PROFILES=coding`。
 
 ## 一、首次部署
 
@@ -36,10 +36,12 @@ openssl version
 
 ### 2. 下载项目
 
+从仓库的 Code 菜单复制克隆地址，替换下方的占位符。
+
 ```bash
 mkdir -p ~/code
 cd ~/code
-git clone https://github.com/example-owner/cos-tool-bot.git
+git clone "<仓库克隆地址>" cos-tool-bot
 cd cos-tool-bot
 ```
 

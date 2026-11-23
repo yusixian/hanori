@@ -20,6 +20,29 @@ describe("UserPrivacyService.runExclusive", () => {
     ).resolves.toBe("saved");
   });
 
+  it("keeps default multi-user capture writes waiting for an active owner", async () => {
+    const service = new UserPrivacyService({} as Database);
+    let release!: () => void;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const owner = service.runExclusive("bot", 43, () => {
+      started();
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    await ready;
+    const write = vi.fn(async () => "persisted");
+    const pending = service.runLibraryExclusiveMany("bot", [43], write);
+    await Promise.resolve();
+    expect(write).not.toHaveBeenCalled();
+    release();
+    await owner;
+    await expect(pending).resolves.toBe("persisted");
+  });
+
   it("rejects inverse nested cross-user acquisition instead of deadlocking", async () => {
     const service = new UserPrivacyService({} as Database);
     let release!: () => void;
@@ -168,7 +191,10 @@ describe("UserPrivacyService.runExclusive", () => {
       update: (table: unknown) => {
         updatedTables.push(table);
         return {
-          set: () => ({ where: engagementUpdate }),
+          set: () => ({
+            where:
+              table === engagementSamples ? engagementUpdate : vi.fn().mockResolvedValue(undefined),
+          }),
         };
       },
     };
@@ -199,8 +225,13 @@ describe("UserPrivacyService.runExclusive", () => {
   it("keeps the latest off boundary after a user opts back in", async () => {
     let now = 100;
     const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
-    const db = {
+    const tx = {
       insert: () => ({ values: () => ({ onConflictDoUpdate }) }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    };
+    const db = {
+      ...tx,
+      transaction: async (run: (value: typeof tx) => Promise<void>) => run(tx),
     } as unknown as Database;
     const service = new UserPrivacyService(db, () => now);
 

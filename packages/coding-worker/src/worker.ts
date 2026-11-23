@@ -380,7 +380,7 @@ export async function runPiJob(
     jobSignal.throwIfAborted();
     const activeSession = session;
     const prompt = [
-      "You are Ai-chan's isolated coding worker.",
+      "You are the bot's isolated coding worker.",
       "Work only in the current repository and implement the requested change completely.",
       "Inspect repository guidance, keep the change focused, and run relevant tests.",
       "Do not push, change git remotes, add credentials, or contact GitHub APIs.",

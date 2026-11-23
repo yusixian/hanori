@@ -1,3 +1,6 @@
+import { promptVersionRoutes } from "./routes/prompt-versions.js";
+import { scheduledTaskRoutes } from "./routes/scheduled-tasks.js";
+import type { ScheduledTaskService } from "./services/scheduled-tasks.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { createAsrRoutes } from "./routes/asr.js";
 import { asrAudioRoutes } from "./routes/asr-audio.js";
@@ -38,6 +41,8 @@ import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import { governanceRoutes } from "./routes/governance.js";
 import { imageMcpRoutes } from "./routes/image-mcp.js";
+import { imageMcpPlatformRoutes } from "./routes/image-mcp-platform.js";
+import type { ImageMcpPlatformService } from "./services/image-mcp-platform.js";
 import { botRunRoutes } from "./routes/bot-runs.js";
 import { botDebugRoutes } from "./routes/bot-debug.js";
 import { engagementSampleRoutes } from "./routes/engagement-samples.js";
@@ -76,6 +81,7 @@ import type { RuntimeHealthReader } from "./runtime-health.js";
 import { EngagementSampleService } from "./services/engagement-sample-service.js";
 
 interface AppOptions {
+  scheduledTasks?: ScheduledTaskService;
   logger?: Pick<Logger, "error">;
   pluginManager?: PluginManager;
   mediaJobs?: PluginMediaJobsOptions;
@@ -105,10 +111,12 @@ interface AppOptions {
   imageGenerationService: ImageGenerationService;
   imageMcpConnectionService: ImageMcpConnectionService;
   imageMcpConnections?: Partial<Record<"mcp_openai" | "mcp_gemini", ImageMcpConnectionService>>;
+  imageMcpPlatform?: ImageMcpPlatformService;
   usageGovernor: UsageGovernor;
   memoryConsolidationPreview?: MemoryConsolidationPreviewPort;
   engagementSampleService?: EngagementSampleService;
   runtimeHealth: RuntimeHealthReader;
+  quoteRenderer?: { available(): Promise<boolean> };
   harness?: HarnessWebhookHandler;
   /** Absent when HARNESS_CONFIG_PATH is unset; the admin API then reports `enabled: false`. */
   harnessAdmin?: HarnessAdminPort;
@@ -140,6 +148,7 @@ export function createApp(options: AppOptions) {
     imageGenerationService,
     imageMcpConnectionService,
     imageMcpConnections,
+    imageMcpPlatform,
     memoryConsolidationPreview,
     engagementSampleService: providedEngagementSampleService,
     runtimeHealth,
@@ -224,29 +233,57 @@ export function createApp(options: AppOptions) {
     .use("/api/harness/admin/*", requireRoles(ownerOnly))
     .route("/api/harness/admin", harnessAdminRoutes(harnessAdmin))
     .route("/api/harness", harnessRoutes(harness))
+    .use("/api/image-mcp-platform/*", requireAppAccess(auth, db), requireRoles(ownerOnly))
+    .route("/api/image-mcp-platform", imageMcpPlatformRoutes(imageMcpPlatform))
     .use("/api/image-mcp/status", requireAppAccess(auth, db))
     .use("/api/image-mcp/status", requireRoles(ownerOrAdmin))
     .use("/api/image-mcp/oauth/start", requireAppAccess(auth, db))
     .use("/api/image-mcp/oauth/start", requireRoles(ownerOnly))
     .use("/api/image-mcp", requireAppAccess(auth, db))
     .use("/api/image-mcp", requireRoles(ownerOnly))
-    .route("/api/image-mcp", imageMcpRoutes(imageMcpConnectionService, baseURL))
+    .route(
+      "/api/image-mcp",
+      imageMcpRoutes(
+        () =>
+          imageMcpPlatform ? imageMcpPlatform.connection("mcp_pixai") : imageMcpConnectionService,
+        baseURL,
+      ),
+    )
     .use("/api/image-mcp-openai/status", requireAppAccess(auth, db))
     .use("/api/image-mcp-openai/status", requireRoles(ownerOrAdmin))
     .use("/api/image-mcp-openai/oauth/start", requireAppAccess(auth, db))
     .use("/api/image-mcp-openai/oauth/start", requireRoles(ownerOnly))
     .use("/api/image-mcp-openai", requireAppAccess(auth, db))
     .use("/api/image-mcp-openai", requireRoles(ownerOnly))
-    .route("/api/image-mcp-openai", imageMcpRoutes(imageMcpConnections?.mcp_openai, baseURL))
+    .route(
+      "/api/image-mcp-openai",
+      imageMcpRoutes(
+        () =>
+          imageMcpPlatform
+            ? imageMcpPlatform.connection("mcp_openai")
+            : imageMcpConnections?.mcp_openai,
+        baseURL,
+      ),
+    )
     .use("/api/image-mcp-gemini/status", requireAppAccess(auth, db))
     .use("/api/image-mcp-gemini/status", requireRoles(ownerOrAdmin))
     .use("/api/image-mcp-gemini/oauth/start", requireAppAccess(auth, db))
     .use("/api/image-mcp-gemini/oauth/start", requireRoles(ownerOnly))
     .use("/api/image-mcp-gemini", requireAppAccess(auth, db))
     .use("/api/image-mcp-gemini", requireRoles(ownerOnly))
-    .route("/api/image-mcp-gemini", imageMcpRoutes(imageMcpConnections?.mcp_gemini, baseURL))
+    .route(
+      "/api/image-mcp-gemini",
+      imageMcpRoutes(
+        () =>
+          imageMcpPlatform
+            ? imageMcpPlatform.connection("mcp_gemini")
+            : imageMcpConnections?.mcp_gemini,
+        baseURL,
+      ),
+    )
     .use("/api/bots", requireAppAccess(auth, db))
     .use("/api/bots/*", requireAppAccess(auth, db))
+    .use("/api/bots/:botId/summary/preview", requireRoles(ownerOnly))
     .use("/api/bots/:botId/runs", requireRoles(ownerOnly))
     .use("/api/bots/:botId/runs/*", requireRoles(ownerOnly))
     .use("/api/bots/:botId/debug", requireRoles(ownerOnly))
@@ -260,6 +297,8 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/governance/*", requireRoles(ownerOnly))
     .use("/api/bots/:botId/cos-inside/groups", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/skills", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/prompt-versions", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/prompt-versions/*", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations/*", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/engagement-samples", requireRoles(ownerOrAdmin))
@@ -268,7 +307,13 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/memories/consolidation-preview", requireRoles(ownerOrAdmin))
     .route(
       "/api/bots",
-      governanceRoutes(db, imageGenerationService, imageMcpConnectionService, imageMcpConnections),
+      governanceRoutes(
+        db,
+        imageGenerationService,
+        imageMcpConnectionService,
+        imageMcpConnections,
+        imageMcpPlatform,
+      ),
     )
     .route(
       "/api/bots",
@@ -285,6 +330,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
+    .route("/api/bots", promptVersionRoutes(db))
     .route("/api/bots", generationRoutes(db, botPool, imageGenerationService))
     .route("/api/bots", generationLibraryRoutes(botPool.getGenerationLibraryService()))
     .route("/api/bots", engagementSampleRoutes(engagementSampleService))
@@ -307,6 +353,9 @@ export function createApp(options: AppOptions) {
     .use("/api/api-test", requireAppAccess(auth, db))
     .use("/api/api-test/*", requireAppAccess(auth, db))
     .route("/api/api-test", apiTestRoutes())
+    .use("/api/scheduled-tasks", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
+    .use("/api/scheduled-tasks/*", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
+    .route("/api/scheduled-tasks", scheduledTaskRoutes(options.scheduledTasks))
     .use("/api/timers", requireAppAccess(auth, db))
     .use("/api/timers/*", requireAppAccess(auth, db))
     .route(
@@ -326,7 +375,7 @@ export function createApp(options: AppOptions) {
       const { version } = runtimeHealth.snapshot();
       return c.json({ ok: true as const, status: "live" as const, version });
     })
-    .get("/api/health/ready", (c) => {
+    .get("/api/health/ready", async (c) => {
       const snapshot = runtimeHealth.snapshot();
       if (snapshot.status !== "ready") {
         return c.json(
@@ -334,7 +383,14 @@ export function createApp(options: AppOptions) {
           503,
         );
       }
-      return c.json({ ok: true as const, status: snapshot.status, version: snapshot.version });
+      return c.json({
+        ok: true as const,
+        status: snapshot.status,
+        version: snapshot.version,
+        ...(options.quoteRenderer
+          ? { quoteRenderer: await options.quoteRenderer.available().catch(() => false) }
+          : {}),
+      });
     })
     .all("/api/*", (c) => c.json({ ok: false as const, error: "Not found" }, 404));
 

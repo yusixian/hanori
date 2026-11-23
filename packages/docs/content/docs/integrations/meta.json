@@ -1,4 +1,4 @@
 {
   "title": "集成",
-  "pages": ["mcp", "plugin-development", "telegram-reader", "github-pi", "dev-harness", "lark"]
+  "pages": ["mcp", "plugin-development", "telegram-reader", "github-pi", "dev-harness"]
 }

@@ -54,6 +54,7 @@ export interface ImageGenerationActor {
   chatType: "private" | "group" | "supergroup";
   isBotAdmin: boolean;
   isDelegatedGroupAdmin: boolean;
+  imageConfirmationPolicy?: "always" | "never";
 }
 
 export interface ImagePreset {
@@ -177,6 +178,7 @@ export interface ImageSafetyResult {
 
 /** Stable, provider-neutral parameters kept locally for task inspection and reproduction. */
 export interface ImageGenerationRequestSnapshot {
+  routingIntent?: CreateImageRequest["routingIntent"];
   requestContext?: ImageGenerationRequestContext;
   imageSize?: string;
   size?: string;
@@ -223,6 +225,12 @@ export interface ImageGenerationView {
   deliveryErrorCode?: string;
   cancellationState?: "requested" | "rejected" | "confirmed" | "unknown";
   approval: ImageApprovalState;
+  confirmationPreview?: Pick<
+    ImageGenerationRequestSnapshot,
+    "size" | "aspectRatio" | "quality" | "modelId"
+  > & { prompt: string; negativePrompt?: string };
+  confirmationVersion?: number;
+  confirmationSeed?: number;
   artifacts: ImageArtifact[];
   createdAt: string;
   updatedAt: string;
@@ -281,6 +289,38 @@ export type ImageDeliveryRetryResult =
     };
 
 export interface ImageGenerationPort {
+  editConfirmation?(
+    actor: ImageGenerationActor,
+    generationId: string,
+    patch: { seed: number },
+  ): Promise<ImageGenerationView | null>;
+  discardConfirmationEdit?(
+    actor: ImageGenerationActor,
+    generationId: string,
+  ): Promise<ImageGenerationView | null>;
+  editConfirmationPrompt?(
+    actor: ImageGenerationActor,
+    generationId: string,
+    prompt: string,
+  ): Promise<ImageGenerationView | null>;
+  recordConfirmationMessage?(
+    actor: ImageGenerationActor,
+    generationId: string,
+    messageId: number,
+  ): Promise<boolean>;
+  findConfirmationByMessage?(
+    actor: ImageGenerationActor,
+    messageId: number,
+  ): Promise<ImageGenerationView | null>;
+  confirm?(
+    actor: ImageGenerationActor,
+    generationId: string,
+    expectedVersion?: number,
+  ): Promise<ImageGenerationAdmission>;
+  cancelConfirmation?(
+    actor: ImageGenerationActor,
+    generationId: string,
+  ): Promise<ImageCancellationResult>;
   retryDelivery?(
     actor: ImageGenerationActor,
     generationId: string,
@@ -293,7 +333,11 @@ export interface ImageGenerationPort {
     actor: ImageGenerationActor,
     request: CreateImageRequest,
   ): Promise<ImageGenerationAdmission>;
-  get(actor: ImageGenerationActor, generationId: string): Promise<ImageGenerationView | null>;
+  get(
+    actor: ImageGenerationActor,
+    generationId: string,
+    options?: { confirmationPreview?: boolean },
+  ): Promise<ImageGenerationView | null>;
   findByDeliveryMessage(
     actor: ImageGenerationActor,
     telegramMessageId: number,

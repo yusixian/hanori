@@ -10,11 +10,9 @@ import {
   ArrowUpRight,
   Brain,
   MessageSquare,
-  Pencil,
   Play,
   RefreshCw,
   ScrollText,
-  Send,
   Square,
   Trash2,
 } from "lucide-react";
@@ -90,44 +88,15 @@ export function BotDashboardPage() {
   }
 
   const isRunning = bot.status === "running";
-  const isLark = bot.platform === "lark-webhook";
-  const quickLinks = isLark
-    ? [
-        { label: t("dashboard.quickEdit"), to: `/bots/${botId}/edit`, icon: Pencil },
-        { label: t("dashboard.quickLogs"), to: `/bots/${botId}/logs`, icon: ScrollText },
-      ]
-    : [
-        { label: t("dashboard.quickAiSettings"), to: `/bots/${botId}/ai`, icon: Brain },
-        {
-          label: t("dashboard.quickConversations"),
-          to: `/bots/${botId}/conversations`,
-          icon: MessageSquare,
-        },
-        { label: t("dashboard.quickLogs"), to: `/bots/${botId}/logs`, icon: ScrollText },
-      ];
-
-  const sendLarkTest = async () => {
-    if (!botId) return;
-    setBusy(true);
-    try {
-      const res = await client.api.bots[":botId"].lark.test.$post({
-        param: { botId },
-        json: { message: t("dashboard.larkTestMessage") },
-      });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) {
-        alert(
-          t("dashboard.sendTestFailed", {
-            error: json.error ?? t("actions.unknownError"),
-          }),
-        );
-      }
-    } catch {
-      alert(t("dashboard.sendTestNetworkError"));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const quickLinks = [
+    { label: t("dashboard.quickAiSettings"), to: `/bots/${botId}/ai`, icon: Brain },
+    {
+      label: t("dashboard.quickConversations"),
+      to: `/bots/${botId}/conversations`,
+      icon: MessageSquare,
+    },
+    { label: t("dashboard.quickLogs"), to: `/bots/${botId}/logs`, icon: ScrollText },
+  ];
 
   return (
     <div className="bot-dashboard-page space-y-7">
@@ -152,7 +121,6 @@ export function BotDashboardPage() {
           <p className="text-primary mb-1 text-sm font-medium">{t("dashboard.eyebrow")}</p>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{bot.name}</h1>
-            {isLark && <Badge variant="muted">Lark</Badge>}
             <Badge variant={statusBadgeVariant[bot.status]}>{t(`status.${bot.status}`)}</Badge>
           </div>
           <p className="text-muted-foreground mt-1 text-sm">{t("dashboard.description")}</p>
@@ -212,20 +180,12 @@ export function BotDashboardPage() {
                 {bot.isActive ? t("dashboard.yes") : t("dashboard.no")}
               </span>
             </div>
-            {!isLark && (
-              <div className="flex items-center justify-between gap-4 border-b pb-3">
-                <span className="text-muted-foreground text-sm">{t("dashboard.aiReply")}</span>
-                <Badge variant={bot.aiEnabled ? "default" : "muted"}>
-                  {bot.aiEnabled ? t("common:common.enabled") : t("common:common.disabled")}
-                </Badge>
-              </div>
-            )}
-            {isLark && (
-              <div className="flex items-center justify-between gap-4 border-b pb-3">
-                <span className="text-muted-foreground text-sm">{t("dashboard.platform")}</span>
-                <span className="text-sm">Lark Webhook</span>
-              </div>
-            )}
+            <div className="flex items-center justify-between gap-4 border-b pb-3">
+              <span className="text-muted-foreground text-sm">{t("dashboard.aiReply")}</span>
+              <Badge variant={bot.aiEnabled ? "default" : "muted"}>
+                {bot.aiEnabled ? t("common:common.enabled") : t("common:common.disabled")}
+              </Badge>
+            </div>
             {bot.adminChatIds.length > 0 && (
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground text-sm">{t("dashboard.admins")}</span>
@@ -276,17 +236,6 @@ export function BotDashboardPage() {
                 <RefreshCw className="h-4 w-4" />
                 {t("actions.restart")}
               </Button>
-              {isLark && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!isRunning || busy}
-                  onClick={sendLarkTest}
-                >
-                  <Send className="h-4 w-4" />
-                  {t("dashboard.sendTest")}
-                </Button>
-              )}
             </div>
             <div className="border-t pt-4">
               <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">

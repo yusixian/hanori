@@ -93,7 +93,7 @@ describe("AI reply group capture and privacy", () => {
       userId: 42,
       userName: "Tester",
       sourceKey: "telegram:7:user",
-      meta: { tgMessageId: 7, publicGroupHistory: true, turnState: "complete" },
+      meta: { threadId: null, tgMessageId: 7, publicGroupHistory: true, turnState: "complete" },
     });
     expect(history.triggerCompression).toHaveBeenCalledWith(-100);
     expect(next).toHaveBeenCalled();
@@ -192,7 +192,7 @@ describe("AI reply group capture and privacy", () => {
       expect.objectContaining({
         content: "ambient future forward",
         userAuthoredContent: undefined,
-        meta: { tgMessageId: 7, publicGroupHistory: true, turnState: "complete" },
+        meta: { threadId: null, tgMessageId: 7, publicGroupHistory: true, turnState: "complete" },
       }),
     );
     runtime.destroy();
@@ -253,6 +253,7 @@ describe("AI reply group capture and privacy", () => {
           content: "private forwarded question",
           userAuthoredContent: undefined,
           meta: {
+            threadId: null,
             tgMessageId: 10,
             forwardOrigin: {
               type: "channel",
@@ -307,7 +308,7 @@ describe("AI reply group capture and privacy", () => {
           role: "user",
           content: "incomplete forwarded question",
           userAuthoredContent: undefined,
-          meta: { tgMessageId: 11 },
+          meta: { threadId: null, tgMessageId: 11 },
         }),
       ]),
     );
@@ -583,7 +584,11 @@ describe("AI reply group capture and privacy", () => {
     streamTextMock.mockImplementationOnce(
       (options: {
         tools: Record<string, Tool>;
-        prepareStep: (input: { messages: ModelMessage[] }) => { messages: ModelMessage[] };
+        prepareStep: (input: {
+          messages: ModelMessage[];
+          steps: typeof steps;
+          stepNumber: number;
+        }) => { messages: ModelMessage[] };
       }) => {
         async function* textStream() {
           toolOutput = await options.tools.get_profile_avatar!.execute!(
@@ -591,6 +596,8 @@ describe("AI reply group capture and privacy", () => {
             { toolCallId: "avatar-call", messages: [] },
           );
           preparedMessages = options.prepareStep({
+            steps,
+            stepNumber: 1,
             messages: [
               {
                 role: "tool",

@@ -29,6 +29,15 @@ beforeEach(() => {
 });
 
 describe("optional video download configuration", () => {
+  it("loads the general extractor configuration without requiring Bilibili credentials", async () => {
+    runtimeConfiguration.mockResolvedValue(state({ ...defaults, downloadEnabled: true }));
+    expect(await loadVideoDownloadConfiguration(manager, "synthetic-bot", "ytdlp")).toMatchObject({
+      provider: "ytdlp",
+      revision: 7,
+      installationRevision: 11,
+    });
+    expect(runtimeConfiguration).toHaveBeenCalledWith("hanori.ytdlp", "synthetic-bot");
+  });
   it("publishes opt-in defaults, bilingual labels and numeric fields without GUI upper caps", () => {
     expect(defaults).toEqual({
       downloadEnabled: false,

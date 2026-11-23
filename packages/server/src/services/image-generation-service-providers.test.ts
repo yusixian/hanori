@@ -71,13 +71,8 @@ function fixture() {
       })),
     })),
   } as unknown as Database;
-  const service = new ImageGenerationService({
-    db,
-    pixai: pixai as never,
-    artifacts: deps.artifacts as never,
-    usageGovernor: deps.usageGovernor as never,
-    logger: deps.logger as never,
-    backends: {
+  const backends: NonNullable<ConstructorParameters<typeof ImageGenerationService>[0]["backends"]> =
+    {
       mcp_openai: {
         adapter: gpt as never,
         artifacts: deps.artifacts as never,
@@ -88,9 +83,16 @@ function fixture() {
         artifacts: deps.artifacts as never,
         endpoint: "https://mcp.example.com/mcp/gemini-image",
       },
-    },
+    };
+  const service = new ImageGenerationService({
+    db,
+    pixai: pixai as never,
+    artifacts: deps.artifacts as never,
+    usageGovernor: deps.usageGovernor as never,
+    logger: deps.logger as never,
+    backends,
   });
-  return { service, config, deps, pixai, gpt, gemini, rows };
+  return { service, config, deps, pixai, gpt, gemini, rows, backends };
 }
 describe("independent image provider selection", () => {
   it("allows native providers without presets and forwards dynamic parameters", async () => {
@@ -251,6 +253,24 @@ describe("independent image provider selection", () => {
     expect(gemini.waitForGeneration).toHaveBeenCalledWith("operation-1", 10000);
     expect(gpt.waitForGeneration).not.toHaveBeenCalled();
     expect(pixai.waitForGeneration).not.toHaveBeenCalled();
+  });
+  it("uses the replacement PixAI connection for new generations", async () => {
+    const { service, pixai, deps, backends, rows } = fixture();
+    const prepareGeneration = vi
+      .fn()
+      .mockResolvedValue({ planId: "new-platform-plan", approvalRequired: false, value: {} });
+    backends.mcp_pixai = {
+      adapter: { ...pixai, prepareGeneration } as never,
+      artifacts: deps.artifacts as never,
+      endpoint: "https://new.example.com/mcp/pixai",
+    };
+    await service.create(ACTOR, { purpose: "anime_illustration", prompt: "new platform cat" });
+    expect(prepareGeneration).toHaveBeenCalledOnce();
+    expect(pixai.prepareGeneration).not.toHaveBeenCalled();
+    expect(rows[0]?.providerMetadata).toMatchObject({
+      endpoint: "https://new.example.com/mcp/pixai",
+    });
+    await service.close();
   });
   it("freezes recovery if the original endpoint has been replaced", async () => {
     const { service, gpt, gemini, deps, rows } = fixture();

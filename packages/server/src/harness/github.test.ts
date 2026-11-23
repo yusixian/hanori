@@ -17,11 +17,15 @@ describe("GitHubAppHarnessClient repository listing", () => {
     const calls: Array<{ path: string; token: string | null }> = [];
     const pages: Record<string, unknown> = {
       "/app/installations?per_page=100&page=1": [{ id: 11 }, { id: 22 }],
-      "/installation/repositories?per_page=100&page=1#11": { repositories: repos("example-owner", 100) },
+      "/installation/repositories?per_page=100&page=1#11": {
+        repositories: repos("example-owner", 100),
+      },
       "/installation/repositories?per_page=100&page=2#11": {
         repositories: repos("example-owner", 20, 100),
       },
-      "/installation/repositories?per_page=100&page=1#22": { repositories: repos("example-org", 1) },
+      "/installation/repositories?per_page=100&page=1#22": {
+        repositories: repos("example-org", 1),
+      },
       "/repos/example-org/repo-0": { default_branch: "main" },
       "/repos/example-org/repo-0/branches/main": { commit: { sha: "abc" } },
     };

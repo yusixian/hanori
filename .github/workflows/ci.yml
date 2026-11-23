@@ -6,13 +6,22 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   check:
-    # Self-hosted runner on the maintainer's Mac; see readme "CI / Self-hosted Runner".
-    # Jobs remain queued while the local runner service is offline.
-    runs-on: [self-hosted, macOS, ARM64, cos-tool-bot]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Scan checked-out source for credentials
+        run: |
+          docker run --rm --network none -v "$GITHUB_WORKSPACE:/repo:ro" \
+            zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055 \
+            dir /repo --config /repo/.gitleaks.toml --redact=100 --no-banner
 
       - uses: pnpm/action-setup@v4
 
@@ -23,11 +32,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Install FFmpeg for media tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install pinned yt-dlp for extractor tests
         run: |
-          # setup-python's macOS archives assume /Users/runner on hosted runners.
-          /opt/homebrew/bin/python3 -c 'import sys; assert sys.version_info >= (3, 10)'
-          /opt/homebrew/bin/python3 -m venv "$RUNNER_TEMP/bilibili-ytdlp"
+          python3 -c 'import sys; assert sys.version_info >= (3, 10)'
+          python3 -m venv "$RUNNER_TEMP/bilibili-ytdlp"
           "$RUNNER_TEMP/bilibili-ytdlp/bin/pip" install -r infrastructure/bilibili-ytdlp/requirements.txt
           echo "$RUNNER_TEMP/bilibili-ytdlp/bin" >> "$GITHUB_PATH"
 
@@ -40,22 +51,21 @@ jobs:
       - name: Format check
         run: pnpm fmt:check
 
+      # Build before typecheck so emitted declarations cannot hide clean-build failures.
+      - name: Production build
+        run: pnpm build
+
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Check translations
         run: pnpm i18n:check
 
-      - name: Build public documentation
-        run: pnpm build:docs
-
       - name: Unit tests
-        # Bound process-heavy Git/CLI fixtures on the shared self-hosted runner.
         run: pnpm test --maxWorkers=4
 
       - name: Install Chromium
-        # Playwright's --with-deps option is only supported on Debian/Ubuntu.
-        run: pnpm --filter @cos-tool-bot/panel exec playwright install chromium
+        run: pnpm --filter @cos-tool-bot/panel exec playwright install --with-deps chromium
 
       - name: Browser tests
         run: pnpm test:browser

@@ -1,12 +1,10 @@
-import type { EmailForwardConfigPublic } from "./lark.js";
-
 export type CommandEntity = {
   name: string;
   args: string[];
   original_msg: string;
 };
 
-export type BotPlatform = "telegram" | "lark-webhook";
+export type BotPlatform = "telegram";
 
 export type BotStatus = "running" | "stopped" | "restarting";
 export type TelegramRichMessageFormat = "markdown" | "html";
@@ -57,8 +55,6 @@ export interface BotRecord {
   aiHasApiKey: boolean;
   createdAt: string;
   updatedAt: string | null;
-  larkWebhookConfig?: { webhookUrl: string; hasSignSecret: boolean };
-  emailForwardConfig?: EmailForwardConfigPublic;
   cosInsideConfig?: CosInsideConfig;
 }
 

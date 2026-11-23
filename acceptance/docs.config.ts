@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { resolve } from "node:path";
 
-// CI runs on the developer's Mac; keep its server separate from the visible local preview.
+// Use a separate port when running the suite alongside a local preview.
 const port = process.env.CI ? 4175 : 43104;
 const baseURL = `http://127.0.0.1:${port}`;
 

@@ -1,4 +1,5 @@
 import type {
+  ConversationCallbacks,
   ImageGenerationActor,
   ImageGenerationPort,
   ImageRouteCapabilities,
@@ -136,6 +137,143 @@ function route(): ImageRouteCapabilities {
 }
 
 describe("choice continuation tools", () => {
+  it("persists proactive replies by actual delivery ID", async () => {
+    streamTextMock.mockReturnValueOnce({
+      textStream: (async function* () {
+        yield "proactive answer";
+      })(),
+      text: Promise.resolve("proactive answer"),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    });
+    const addMessages = vi.fn<ConversationCallbacks["addMessages"]>();
+    const conversation: ConversationCallbacks = {
+      getHistory: async () => ({ summary: null, messages: [] }),
+      addMessage: vi.fn(),
+      addMessages,
+      triggerCompression: vi.fn(),
+      clearHistory: vi.fn(),
+    };
+    const { api } = createApi();
+    await continueChat(api, createConfig(createCoordinator(), { conversation }), {
+      chatId: CHAT_ID,
+      userId: USER_ID,
+      eventDescription: "timer expired",
+      requireDelivery: true,
+    });
+    expect(addMessages).toHaveBeenCalledOnce();
+    expect(addMessages.mock.calls[0]![0].filter((row) => row.role === "assistant")).toEqual([
+      {
+        chatId: CHAT_ID,
+        role: "assistant",
+        content: "proactive answer",
+        meta: {
+          trigger: "event_continuation",
+          tgMessageId: 201,
+          model: "model-a",
+          providerId: "p",
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    {
+      name: "earlier step already delivered",
+      scene: "The door opened.",
+      final: "Your next choice is ready.",
+      delivered: "The door opened.",
+      pending: "Your next choice is ready.",
+    },
+    {
+      name: "only part of an earlier step delivered",
+      scene: "The door opened.\n\nShe stepped inside.",
+      final: "Your next choice is ready.",
+      delivered: "The door opened.",
+      pending: "The door opened.\n\nShe stepped inside.\n\nYour next choice is ready.",
+    },
+    {
+      name: "final step already delivered",
+      scene: "The door opened.",
+      final: "Your next choice is ready.",
+      delivered: "Your next choice is ready.",
+      pending: "The door opened.",
+    },
+    {
+      name: "all text delivered and empty final step",
+      scene: "The door opened.",
+      final: "",
+      delivered: "The door opened.",
+      pending: "",
+    },
+  ])("preserves undelivered steps: $name", async ({ scene, final, delivered, pending }) => {
+    streamTextMock.mockImplementationOnce((options: { tools: Record<string, Tool> }) => ({
+      textStream: (async function* () {
+        yield scene;
+        await options.tools.multi_message!.execute!(
+          { messages: [{ text: delivered }] },
+          { toolCallId: "scene", messages: [] },
+        );
+        yield final;
+      })(),
+      text: Promise.resolve(final),
+      steps: Promise.resolve([
+        { text: scene, toolCalls: [{ toolName: "multi_message" }], toolResults: [] },
+        { text: final, toolCalls: [], toolResults: [] },
+      ]),
+      totalUsage: Promise.resolve({ inputTokens: 2, outputTokens: 2, totalTokens: 4 }),
+    }));
+    const { api, sendMessage } = createApi();
+    await expect(
+      continueChat(api, createConfig(createCoordinator()), {
+        chatId: CHAT_ID,
+        userId: USER_ID,
+        eventDescription: "choice selected",
+        requireDelivery: true,
+      }),
+    ).resolves.toBe(true);
+    expect(sendMessage.mock.calls.map(([, body]) => body)).toEqual(
+      pending ? [delivered, pending] : [delivered],
+    );
+  });
+
+  it.each(["Your next choice is ready.", ""])(
+    "delivers the story preceding a tool even when the final step is %j",
+    async (final) => {
+      const scene = "She answered your choice and opened the door.";
+      streamTextMock.mockReturnValueOnce({
+        textStream: (async function* () {
+          yield scene;
+          yield final;
+        })(),
+        text: Promise.resolve(final),
+        steps: Promise.resolve([
+          { text: scene, toolCalls: [{ toolName: "send_choice" }], toolResults: [] },
+          { text: final, toolCalls: [], toolResults: [] },
+        ]),
+        totalUsage: Promise.resolve({ inputTokens: 2, outputTokens: 2, totalTokens: 4 }),
+      });
+      const { api, sendMessage } = createApi();
+      const onLog = vi.fn();
+      await expect(
+        continueChat(api, createConfig(createCoordinator(), { onLog }), {
+          chatId: CHAT_ID,
+          userId: USER_ID,
+          eventDescription: "choice selected",
+          requireDelivery: true,
+        }),
+      ).resolves.toBe(true);
+      const text = final ? `${scene}\n\n${final}` : scene;
+      expect(sendMessage.mock.calls.map(([, body]) => body)).toContain(text);
+      expect(onLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "AI continuation response",
+          meta: expect.objectContaining({ responseText: text }),
+        }),
+      );
+    },
+  );
+
   it.each([1000, undefined])(
     "records whole-turn usage and preserves unknown cache usage (last-step cache: %s)",
     async (cachedTokens) => {

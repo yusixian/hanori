@@ -9,6 +9,8 @@ import {
 } from "@cos-tool-bot/database";
 import {
   DEFAULT_GENERATION_LIBRARY_SETTINGS,
+  GenerationLibraryError,
+  type GenerationLibraryErrorCode,
   type CharacterBinding,
   type CharacterInput,
   type DanbooruCharacterResult,
@@ -106,27 +108,7 @@ const bindingInputSchema = z
   })
   .strict();
 
-export type GenerationLibraryErrorCode =
-  | "invalid_input"
-  | "forbidden"
-  | "not_found"
-  | "privacy_denied"
-  | "characters_disabled"
-  | "assets_disabled"
-  | "nsfw_disabled"
-  | "no_default_character"
-  | "too_many_selections"
-  | "prompt_too_long";
-
-export class GenerationLibraryError extends Error {
-  constructor(
-    readonly code: GenerationLibraryErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "GenerationLibraryError";
-  }
-}
+export { GenerationLibraryError, type GenerationLibraryErrorCode } from "@cos-tool-bot/shared";
 
 type CharacterRow = typeof generationCharacters.$inferSelect & { bindingCount?: number };
 type AssetRow = typeof promptAssets.$inferSelect;

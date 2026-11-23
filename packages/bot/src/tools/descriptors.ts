@@ -94,6 +94,7 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   { name: "update_profile", statusLabel: "📝 记住你的变化...", effect: "mutating" },
   { name: "search_profiles", statusLabel: "🔎 想想这个人...", effect: "read_only" },
   { name: "search_history", statusLabel: "📜 翻翻聊天记录...", effect: "read_only" },
+  { name: "create_quote_sticker", statusLabel: "💬 制作语录...", effect: "visible", callLimit: 1 },
   // Telegram tools
   { name: "send_photo", statusLabel: "📷 发送图片...", effect: "visible" },
   { name: "send_voice", statusLabel: "🎙️ 发送语音...", effect: "visible" },
@@ -155,6 +156,12 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   { name: "get_current_time", statusLabel: "🕐 获取时间...", effect: "read_only" },
   { name: "generate_image", statusLabel: "🎨 画画中...", effect: "mutating" },
   { name: "github_repository", statusLabel: "🐙 查看 GitHub 仓库...", effect: "read_only" },
+  {
+    name: "github_list_repositories",
+    statusLabel: "🐙 查看仓库列表...",
+    effect: "read_only",
+    callLimit: 10,
+  },
   { name: "github_read_file", statusLabel: "🐙 读取仓库代码...", effect: "read_only" },
   { name: "github_list_tree", statusLabel: "🐙 查看代码结构...", effect: "read_only" },
   { name: "github_list_issues", statusLabel: "🐙 查看 Issue...", effect: "read_only" },

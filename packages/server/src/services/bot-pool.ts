@@ -1,3 +1,15 @@
+import type { QuoteDependencies } from "@cos-tool-bot/bot";
+import { QuoteSourceStore } from "./quote-source-store.js";
+import { readScheduledTaskHistory } from "./scheduled-task-history.js";
+import { executeScheduledTaskWithBotConfig } from "@cos-tool-bot/bot";
+import type {
+  ScheduledTaskPlan,
+  ScheduledTaskPort,
+  ScheduledTaskRecord,
+} from "@cos-tool-bot/shared";
+import type { ScheduledTaskExecutorOptions } from "./scheduled-tasks.js";
+import { assembleAiReply } from "./bot-runtime/ai-reply.js";
+import { redactDiagnostic } from "./run-redaction.js";
 import { ImageDeliveryError } from "@cos-tool-bot/shared";
 import type { MediaTranscriptionPort, PluginRuntimePort } from "@cos-tool-bot/shared";
 import type { BotTimerHandlers, TelegramObservationCallbacks } from "@cos-tool-bot/bot";
@@ -10,7 +22,6 @@ import {
   pixaiGenerations,
 } from "@cos-tool-bot/database";
 import type {
-  BotPlatform,
   IBotManager,
   ImageGenerationPort,
   ImageGenerationRequestSnapshot,
@@ -41,15 +52,12 @@ import {
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
 import type { EmbeddingService } from "./embedding-service.js";
-import { ImapEmailMonitor } from "./imap-email-monitor.js";
 import {
   AsyncTaskLimiter,
   isTerminalGenerationRecoveryError,
   PendingGenerationInsertFallbackTracker,
   tryPersistTerminalGenerationFailure,
 } from "./generation-recovery.js";
-import { LarkBotManager } from "./lark-bot-manager.js";
-import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { ConversationRetention } from "./conversation-retention.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 import { PeopleProfileStore } from "./people-profile-store.js";
@@ -176,7 +184,7 @@ export class BotPool {
         const rows = await db
           .select({ id: bots.id, aiConfig: bots.aiConfig })
           .from(bots)
-          .where(eq(bots.isActive, true));
+          .where(and(eq(bots.isActive, true), eq(bots.platform, "telegram")));
         return rows.map((bot) => ({
           id: bot.id,
           retentionDays:
@@ -228,6 +236,105 @@ export class BotPool {
   ): void {
     this.services.chatAiSelectionService = service;
     this.services.chatAiSelectionRuntimeRegistry = runtimeRegistry;
+  }
+
+  async notifyScheduledTaskFailure(task: ScheduledTaskRecord, error: string): Promise<void> {
+    const manager = this.managers.get(task.botId);
+    if (!(manager instanceof BotManager) || manager.status !== "running")
+      throw new Error("Task notification Bot is unavailable");
+    const [bot] = await this.db.select().from(bots).where(eq(bots.id, task.botId)).limit(1);
+    if (!bot) throw new Error("Task notification Bot is unavailable");
+    const text = `定时任务 ${task.id} 连续失败后已暂停。请查看执行记录后恢复。\n${String(redactDiagnostic(error)).slice(0, 1500)}`;
+    const recipients = bot.adminChatIds.length ? bot.adminChatIds : [task.chatId];
+    await Promise.all(
+      recipients.map((chatId) =>
+        manager.sendHtml(
+          chatId,
+          escapeHtml(text),
+          chatId === task.chatId ? (task.threadId ?? undefined) : undefined,
+        ),
+      ),
+    );
+  }
+
+  setQuoteRenderer(renderer: QuoteDependencies["renderer"]) {
+    this.services.quoteRenderer = renderer;
+    this.services.quoteSourceStore = new QuoteSourceStore(this.db);
+  }
+
+  setScheduledTasks(port: ScheduledTaskPort) {
+    this.services.scheduledTasks = port;
+  }
+
+  async runScheduledTask(
+    task: ScheduledTaskRecord,
+    plan: ScheduledTaskPlan,
+    context: ScheduledTaskExecutorOptions,
+  ): ReturnType<typeof executeScheduledTaskWithBotConfig> {
+    const manager = this.managers.get(task.botId);
+    if (!(manager instanceof BotManager) || manager.status !== "running")
+      throw new Error("Task Bot is not running");
+    const [bot] = await this.db.select().from(bots).where(eq(bots.id, task.botId)).limit(1);
+    if (!bot || task.approvedByUserId === null)
+      throw new Error("Task Bot or approved administrator is unavailable");
+    const token = tryDecrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
+    if (!token) throw new Error("Task Bot credentials are unavailable");
+    const runtime = toAiConfigRuntime(bot.aiConfig, env.ENCRYPTION_KEY);
+    if (!runtime) throw new Error("Task AI configuration is unavailable");
+    const secrets = [token, ...runtime.providers.map((provider) => provider.apiKey)];
+    try {
+      const assembled = await assembleAiReply(
+        bot.id,
+        runtime,
+        new DbLogger(this.db, this.logger, bot.id),
+        this.services,
+        this.runtimeHost,
+      );
+      if (!assembled) throw new Error("Task Agent AI configuration is unavailable or disabled");
+      const now = new Date();
+      const historyWindow = {
+        since: new Date(now.getTime() - (plan.dataScope.lookbackHours ?? 24) * 3600_000),
+        until: now,
+        limit: Math.min(plan.dataScope.maxMessages ?? 500, 1000),
+      };
+      return await executeScheduledTaskWithBotConfig({
+        api: token,
+        plan,
+        chatId: task.chatId,
+        threadId: task.threadId ?? undefined,
+        userId: task.approvedByUserId,
+        signal: context.signal,
+        onAgentResolved: context.onAgentResolved,
+        aiConfig: assembled.aiReply,
+        taskAgentConfig: runtime.config.taskAgentConfig,
+        agentToolsConfig: runtime.config.agentToolsConfig,
+        adminIds: bot.adminChatIds,
+        now,
+        readTaskHistory: async () => {
+          if (plan.dataScope.kind !== "chat") throw new Error("Task has no approved history scope");
+          return readScheduledTaskHistory(this.db, task, historyWindow);
+        },
+        summarizeTaskHistory: this.services.summaryService
+          ? async (signal) => {
+              if (plan.dataScope.kind !== "chat")
+                throw new Error("Task has no approved history scope");
+              return this.services.summaryService!.summarize({
+                botId: task.botId,
+                chatId: task.chatId,
+                threadId: task.threadId,
+                userId: task.approvedByUserId!,
+                approvedWindow: historyWindow,
+                signal,
+                request: { instructions: plan.instructions },
+              });
+            }
+          : undefined,
+      });
+    } catch (error) {
+      throw new Error(
+        String(redactDiagnostic(error instanceof Error ? error.message : String(error), secrets)),
+      );
+    }
   }
 
   setBackupService(service: BackupService) {
@@ -517,7 +624,10 @@ export class BotPool {
   async startAll() {
     let activeBots;
     try {
-      activeBots = await this.db.select().from(bots).where(eq(bots.isActive, true));
+      activeBots = await this.db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.isActive, true), eq(bots.platform, "telegram")));
     } catch (err) {
       this.logger.warn(err, "Failed to query active bots (table may not exist — run migrations)");
       return;
@@ -576,6 +686,7 @@ export class BotPool {
   private async startBotImpl(botId: string) {
     const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
     if (!bot) throw new Error(`Bot ${botId} not found`);
+    if (bot.platform && bot.platform !== "telegram") throw new Error("Unsupported bot platform");
     if (!bot.isActive) throw new Error(`Bot ${botId} is disabled`);
 
     const existing = this.managers.get(botId);
@@ -591,13 +702,6 @@ export class BotPool {
       await this.stopBotImpl(botId);
     }
 
-    const platform: BotPlatform = bot.platform === "lark-webhook" ? "lark-webhook" : "telegram";
-    if (platform === "lark-webhook") {
-      await this.startLarkWebhookBot(botId, bot);
-      return;
-    }
-
-    // Telegram bot flow
     const token = tryDecrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
     if (!token) {
       throw new Error(
@@ -691,56 +795,6 @@ export class BotPool {
         `Initial conversation history governance failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
-  }
-
-  private async startLarkWebhookBot(botId: string, bot: typeof bots.$inferSelect) {
-    const dbLogger = new DbLogger(this.db, this.logger, botId);
-
-    const larkConfig = bot.larkWebhookConfig;
-    if (!larkConfig?.webhookUrl) {
-      throw new Error("Lark webhook URL is not configured");
-    }
-
-    const signSecret = larkConfig.encryptedSignSecret
-      ? tryDecrypt(larkConfig.encryptedSignSecret, env.ENCRYPTION_KEY)
-      : undefined;
-    const larkClient = new LarkWebhookClient(larkConfig.webhookUrl, signSecret ?? undefined);
-
-    // Build email monitor if configured
-    let emailMonitor: ImapEmailMonitor | undefined;
-    const emailConfig = bot.emailForwardConfig;
-
-    if (emailConfig) {
-      const password = tryDecrypt(emailConfig.encryptedPassword, env.ENCRYPTION_KEY);
-      if (password) {
-        emailMonitor = new ImapEmailMonitor(
-          {
-            host: emailConfig.imapHost,
-            port: emailConfig.imapPort,
-            secure: emailConfig.imapTls,
-            auth: { user: emailConfig.email, pass: password },
-            pollIntervalSec: emailConfig.pollIntervalSec,
-            filters: emailConfig.filters,
-            disabledEventTypes: emailConfig.disabledEventTypes,
-          },
-          larkClient,
-          this.logger,
-          emailConfig.larkMentionMap,
-        );
-      } else {
-        dbLogger.warn("Cannot decrypt email password, email forwarding disabled").catch(() => {});
-      }
-    }
-
-    const manager = new LarkBotManager({
-      botId,
-      dbLogger,
-      larkClient,
-      emailMonitor,
-    });
-
-    this.managers.set(botId, manager);
-    await manager.start();
   }
 
   async stopBot(botId: string) {

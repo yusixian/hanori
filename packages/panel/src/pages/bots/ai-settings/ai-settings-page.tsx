@@ -1,3 +1,7 @@
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { ModelRecoveryFields, modelRecoveryError } from "./components/model-recovery-fields";
+import { PromptVersions } from "./prompt-versions";
+import { TaskAgentFields } from "./sections/task-agent-fields";
 import { EngagementSection } from "./sections/engagement-section";
 import { Button } from "@/components/ui/button";
 import { useBeforeLogout, type LogoutAction } from "@/components/layout/before-logout";
@@ -507,6 +511,10 @@ export function BotAiSettingsPage() {
   const isDirty = isConfigDirty || isSelectionDirty;
   const { registerBeforeLogout } = useBeforeLogout();
   const executionConfigUpdate = toExecutionConfigUpdate(executionConfig);
+  const recoveryInvalid = [
+    config.modelRecovery,
+    ...Object.values(config.groupOverrides).map((override) => override.modelRecovery),
+  ].some((recovery) => modelRecoveryError(recovery, config.providers));
   const pageBusy = saving || savingSelection || retryingSelection;
   const saveDisabledReason = pageBusy
     ? t("page.saveInProgress")
@@ -516,11 +524,13 @@ export function BotAiSettingsPage() {
         ? t("page.saveUnavailable")
         : isSelectionDirty
           ? t("selection.applyBeforeCatalogSave")
-          : executionConfigUpdate === null
-            ? t("execution.validation.fixErrors")
-            : !isConfigDirty && !configApplyRetryPending
-              ? t("page.noChangesToSave")
-              : null;
+          : recoveryInvalid
+            ? t("recovery.fixErrors")
+            : executionConfigUpdate === null
+              ? t("execution.validation.fixErrors")
+              : !isConfigDirty && !configApplyRetryPending
+                ? t("page.noChangesToSave")
+                : null;
   const saveStatus: {
     icon: typeof CheckCircle2;
     label: string;
@@ -625,6 +635,10 @@ export function BotAiSettingsPage() {
       isSelectionDirty
     )
       return;
+    if (recoveryInvalid) {
+      setMessage({ type: "error", text: t("recovery.fixErrors") });
+      return;
+    }
     if (!executionConfigUpdate) {
       setMessage({ type: "error", text: t("execution.validation.fixErrors") });
       return;
@@ -1227,6 +1241,27 @@ export function BotAiSettingsPage() {
                     onRetry={() => void handleSelectionRetry()}
                   />
                 )}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">{t("recovery.title")}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-muted-foreground text-sm">{t("recovery.description")}</p>
+                    <ModelRecoveryFields
+                      value={config.modelRecovery}
+                      providers={config.providers}
+                      primary={
+                        globalSelection?.selection ?? {
+                          providerId: config.activeProviderId,
+                          modelId: config.activeModelId,
+                        }
+                      }
+                      onChange={(modelRecovery) =>
+                        setConfig((previous) => ({ ...previous, modelRecovery }))
+                      }
+                    />
+                  </CardContent>
+                </Card>
                 <ProvidersSection
                   providers={config.providers ?? []}
                   activeProviderId={globalSelectionDraft?.providerId ?? config.activeProviderId}
@@ -1310,6 +1345,7 @@ export function BotAiSettingsPage() {
 
             {activeSection === "replies" && (
               <div className="space-y-3">
+                {botId && <PromptVersions key={botId} botId={botId} />}
                 <SettingsDisclosureRow
                   {...disclosureProps("reply-prompts")}
                   title={t("disclosures.replyPrompts.title")}
@@ -1516,7 +1552,25 @@ export function BotAiSettingsPage() {
                   description={t("disclosures.agentTools.description")}
                   summary={agentCfg.enabled ? t("common.enabled") : t("common.disabled")}
                 >
-                  <AgentToolsSection config={agentCfg} onUpdate={updateAgentTools} />
+                  <AgentToolsSection
+                    config={agentCfg}
+                    onUpdate={updateAgentTools}
+                    providers={config.providers ?? []}
+                  />
+                  <div className="mt-6 space-y-4">
+                    <h3 className="text-base font-semibold">{t("taskAgent.title")}</h3>
+                    <p className="text-muted-foreground text-sm">{t("taskAgent.description")}</p>
+                    <TaskAgentFields
+                      config={config.taskAgentConfig ?? {}}
+                      providers={config.providers ?? []}
+                      onUpdate={(updates) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          taskAgentConfig: { ...prev.taskAgentConfig, ...updates },
+                        }))
+                      }
+                    />
+                  </div>
                 </SettingsDisclosureRow>
                 <SettingsDisclosureRow
                   {...disclosureProps("artwork-tools")}
@@ -1594,6 +1648,8 @@ export function BotAiSettingsPage() {
                   <GroupOverridesSection
                     overrides={config.groupOverrides}
                     engagement={config.engagement}
+                    modelRecovery={config.modelRecovery}
+                    providers={config.providers}
                     onAdd={addGroupOverride}
                     onUpdate={updateOverride}
                     onRemove={removeOverride}

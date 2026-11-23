@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   mergePluginConfig,
   PluginConfigError,
@@ -9,7 +10,7 @@ import {
   type PluginConfigUpdate,
   type PluginManifest,
 } from "@cos-tool-bot/shared";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface PluginConfigFormProps {
@@ -20,6 +21,7 @@ export interface PluginConfigFormProps {
   onSave: (update: PluginConfigUpdate) => Promise<void>;
   disabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  fieldHelp?: Record<string, ReactNode>;
 }
 
 type Draft = Record<string, string | boolean>;
@@ -51,6 +53,7 @@ function ConfigDraft({
   onSave,
   disabled,
   onDirtyChange,
+  fieldHelp,
 }: PluginConfigFormProps) {
   const { t } = useTranslation("plugins");
   const id = useId();
@@ -243,12 +246,17 @@ function ConfigDraft({
                   </option>
                 ))}
               </select>
-            ) : field.type === "text" && !field.secret ? (
+            ) : field.type === "text" ? (
               <Textarea
                 {...controlProps}
+                autoComplete={field.secret ? "new-password" : "off"}
+                spellCheck={field.secret ? false : undefined}
                 value={String(draft[field.key])}
                 onChange={(event) => edit(field.key, event.target.value)}
-                className="min-w-0 [overflow-wrap:anywhere]"
+                className={cn(
+                  "min-w-0 [overflow-wrap:anywhere]",
+                  field.secret && "[-webkit-text-security:disc]",
+                )}
               />
             ) : (
               <Input
@@ -310,6 +318,7 @@ function ConfigDraft({
                 ) : null}
               </div>
             ) : null}
+            {fieldHelp?.[field.key]}
             {error ? (
               <p
                 id={`${fieldId}-error`}

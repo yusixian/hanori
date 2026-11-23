@@ -2,6 +2,23 @@ import { describe, expect, it } from "vitest";
 import { classifyProviderError, redactDiagnostic } from "./run-redaction.js";
 
 describe("redactDiagnostic", () => {
+  it("scrubs pasted deployment settings while preserving diagnostic context", () => {
+    const input = [
+      "ENCRYPTION_KEY=fixture-encryption-value",
+      "DATABASE_URL=postgresql://service:fixture%40password@db.example/app",
+      "BETTER_AUTH_SECRET='fixture secret'",
+      "input_token=9",
+    ].join("\n");
+    expect(redactDiagnostic({ text: input })).toEqual({
+      text: [
+        "ENCRYPTION_KEY=[REDACTED]",
+        "DATABASE_URL=postgresql://service:[REDACTED]@db.example/app",
+        "BETTER_AUTH_SECRET='[REDACTED]'",
+        "input_token=9",
+      ].join("\n"),
+    });
+  });
+
   it("redacts complete quoted assignments while preserving surrounding diagnostics", () => {
     expect(redactDiagnostic('password: "alpha beta gamma"; status=403')).toBe(
       'password: "[REDACTED]"; status=403',

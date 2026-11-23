@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import { countTokens } from "gpt-tokenizer";
 import type {
+  QuoteSource,
   AgentToolsConfig,
   BotMemory,
   BotMemoryCallbacks,
@@ -73,6 +74,7 @@ export interface PromptBundle {
    * cite, so they are also the only legal `reply_to_specific` targets.
    */
   replyableMessageIds: number[];
+  quoteSources?: QuoteSource[];
 }
 
 export interface CompletedPromptBundle {
@@ -81,6 +83,7 @@ export interface CompletedPromptBundle {
 }
 
 export interface ContextAssemblyInput {
+  quoteSourcesEnabled?: boolean;
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -99,6 +102,7 @@ export interface ContextAssemblyInput {
   historyExcludeSourceKey?: string;
   historyBeforeId?: number;
   historyBeforeTelegramMessageId?: number;
+  historyThreadId?: number | null;
   ringBufferContext?: string;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
@@ -295,6 +299,7 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
       "developer",
       buildExtendedToolsPrompt({
         capabilities: input.toolCapabilities,
+        botMemoryContractIncluded: input.toolCapabilities.has("bot-memory"),
         availableAgents,
         isPrivate: input.isPrivate,
         timerMaxSeconds: resolveTimerMaxSeconds(input.timerMaxSeconds),
@@ -364,11 +369,13 @@ function finishBundle(
   messages: PromptBundle["messages"],
   sections: PromptSectionTrace[],
   replyableMessageIds: number[] = [],
+  quoteSources?: QuoteSource[],
 ): PromptBundle {
   const staticContent = messages[0]?.content ?? "";
   return {
     messages,
     replyableMessageIds,
+    ...(quoteSources ? { quoteSources } : {}),
     trace: {
       sections,
       totalEstimatedTokens: messages.reduce(
@@ -560,6 +567,7 @@ function historySections(
   isPrivate: boolean,
   ringBufferContext?: string,
   replyableMessageIds?: number[],
+  quoteSources?: QuoteSource[],
 ): RawSection[][] {
   const historyDetails = history.budgetTrace
     ? {
@@ -581,8 +589,15 @@ function historySections(
   };
   /** Records the id as quotable and returns it, or returns undefined when it stays hidden. */
   const claimQuotableId = (message: (typeof history.messages)[number]) => {
-    if (isPrivate || message.role !== "user" || message.tgMessageId === undefined) return undefined;
+    if (
+      (isPrivate && message.role !== "assistant" && !(quoteSources && message.quoteSource)) ||
+      !["user", "assistant"].includes(message.role) ||
+      message.tgMessageId === undefined
+    )
+      return undefined;
     replyableMessageIds?.push(message.tgMessageId);
+    if (message.quoteSource && message.quoteSource.messageId === message.tgMessageId)
+      quoteSources?.push(structuredClone(message.quoteSource));
     return message.tgMessageId;
   };
   if (historyFormat === "prompt") {
@@ -603,7 +618,10 @@ function historySections(
       const lines = history.messages.map((message) => {
         const content = historyContent(message);
         if (message.role === "context") return `[群聊上下文]\n${content}`;
-        if (message.role === "assistant") return `AI: ${content}`;
+        if (message.role === "assistant") {
+          const id = claimQuotableId(message);
+          return id === undefined ? `AI: ${content}` : `AI [#${id}]: ${content}`;
+        }
         const name = message.userName || "User";
         const id = claimQuotableId(message);
         return id === undefined ? `${name}: ${content}` : `[#${id} ${name}]: ${content}`;
@@ -664,9 +682,17 @@ function historySections(
     const role = message.role === "assistant" ? "assistant" : "user";
     const attributedContent = historyContent(message);
     let content = attributedContent;
-    if (!isPrivate && message.userName && message.role === "user") {
+    if (message.role === "assistant") {
       const id = claimQuotableId(message);
-      const label = id === undefined ? message.userName : `#${id} ${message.userName}`;
+      if (id !== undefined) content = `[#${id}] ${attributedContent}`;
+    }
+    if (
+      ((!isPrivate && message.userName) || (quoteSources && message.quoteSource)) &&
+      message.role === "user"
+    ) {
+      const id = claimQuotableId(message);
+      const label =
+        id === undefined ? message.userName || "User" : `#${id} ${message.userName || "User"}`;
       content = `[${label}]: ${attributedContent}`;
     }
     groups.push([
@@ -703,6 +729,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
   const messages: PromptBundle["messages"] = [];
   const traces: PromptSectionTrace[] = [];
   const replyableMessageIds: number[] = [];
+  const quoteSources: QuoteSource[] | undefined = input.quoteSourcesEnabled ? [] : undefined;
   const conversationConfig = input.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const historyFormat = input.historyFormat ?? conversationConfig.historyFormat ?? "prompt";
   const memoryConfig = input.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
@@ -733,8 +760,10 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
     const historyOptions =
       input.historyExcludeSourceKey ||
       input.historyBeforeId !== undefined ||
-      input.historyBeforeTelegramMessageId !== undefined
+      input.historyBeforeTelegramMessageId !== undefined ||
+      input.historyThreadId !== undefined
         ? {
+            ...(input.historyThreadId !== undefined ? { threadId: input.historyThreadId } : {}),
             ...(input.historyExcludeSourceKey
               ? { excludeSourceKey: input.historyExcludeSourceKey }
               : {}),
@@ -780,6 +809,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       input.isPrivate,
       input.ringBufferContext,
       replyableMessageIds,
+      quoteSources,
     )) {
       appendMessage(messages, traces, group);
     }
@@ -948,7 +978,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
 
   appendMessage(messages, traces, lateBindingSections);
 
-  return finishBundle(messages, traces, replyableMessageIds);
+  return finishBundle(messages, traces, replyableMessageIds, quoteSources);
 }
 
 export async function assembleContext(input: ContextAssemblyInput): Promise<AssembledContext> {

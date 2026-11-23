@@ -32,6 +32,8 @@ test("renders public Help without Telegram SDK or a working session API", async 
 
   await expect.element(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
   await expect.element(page.getByText("/help", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("/q", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("/qcolor", { exact: true })).toBeVisible();
   await expect.element(page.getByRole("heading", { name: "Privacy boundary" })).toBeVisible();
   await expect.element(page.getByRole("heading", { name: "About" })).toBeVisible();
   await expect.element(page.getByRole("navigation").getByText("Help")).toBeVisible();

@@ -1,61 +1,21 @@
-import { isTimeoutError } from "@cos-tool-bot/shared";
+import {
+  isTimeoutError,
+  isDiagnosticCredentialKey,
+  redactDiagnosticText,
+} from "@cos-tool-bot/shared";
 
-const BEARER = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
-const SENSITIVE_HEADER = /\b(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+/gi;
-const SENSITIVE_LABEL =
-  "authorization|proxy[-_ ]?authorization|api[-_ ]?key|(?:access|refresh|auth|bearer|bot|session|csrf)[-_ ]?token|token|secret|password|passwd|passphrase|cookie|credential";
-const CREDENTIAL_ASSIGNMENT = new RegExp(
-  String.raw`(?<!\w)(["']?)(${SENSITIVE_LABEL})\1(\s*[:=]\s*)("(?:\\[\s\S]|[^"\\])*(?:"|\\?$)|'(?:\\[\s\S]|[^'\\])*(?:'|\\?$)|\[REDACTED\]|[^\s,;&}\]]+)`,
-  "gi",
-);
 const MAX_DIAGNOSTIC_DEPTH = 12;
 const MAX_DIAGNOSTIC_NODES = 2_000;
 const MAX_COLLECTION_ITEMS = 200;
 const MAX_STRING_CHARS = 65_536;
 const MAX_TOTAL_STRING_CHARS = 131_072;
 
-function isSensitiveKey(key: string): boolean {
-  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  const isTokenMetric =
-    /^(?:input|output|total|cachedinput|reasoning|prompt|completion|max|min|used|remaining|billable)tokens?$/.test(
-      normalized,
-    ) || /^tokens?(?:count|usage|limit|used|remaining)$/.test(normalized);
-  if (isTokenMetric) return false;
-  return (
-    normalized === "authorization" ||
-    normalized === "proxyauthorization" ||
-    normalized === "token" ||
-    normalized.endsWith("apikey") ||
-    normalized.endsWith("token") ||
-    normalized.endsWith("secret") ||
-    normalized.endsWith("password") ||
-    normalized.endsWith("passwd") ||
-    normalized.endsWith("passphrase") ||
-    normalized.endsWith("cookie") ||
-    normalized.endsWith("credential") ||
-    normalized.endsWith("credentials") ||
-    normalized.endsWith("privatekey")
-  );
-}
-
 export function redactDiagnostic(value: unknown, secrets: string[] = []): unknown {
   const seen = new WeakSet<object>();
   let remainingNodes = MAX_DIAGNOSTIC_NODES;
   let remainingStringChars = MAX_TOTAL_STRING_CHARS;
   const scrubString = (input: string) => {
-    let result = input
-      .replace(SENSITIVE_HEADER, "$1: [REDACTED]")
-      .replace(BEARER, "Bearer [REDACTED]")
-      .replace(
-        CREDENTIAL_ASSIGNMENT,
-        (_match, quote: string, key: string, separator: string, credential: string) => {
-          const valueQuote = /^["']/.test(credential) ? credential[0] : "";
-          return `${quote}${key}${quote}${separator}${valueQuote}[REDACTED]${valueQuote}`;
-        },
-      );
-    for (const secret of secrets) {
-      if (secret.length >= 4) result = result.split(secret).join("[REDACTED]");
-    }
+    const result = redactDiagnosticText(input, secrets);
     const allowed = Math.max(0, Math.min(MAX_STRING_CHARS, remainingStringChars));
     if (result.length <= allowed) {
       remainingStringChars -= result.length;
@@ -65,7 +25,7 @@ export function redactDiagnostic(value: unknown, secrets: string[] = []): unknow
     return `${result.slice(0, allowed)}… [truncated: diagnostic text limit]`;
   };
   const visit = (input: unknown, key?: string, depth = 0): unknown => {
-    if (key && isSensitiveKey(key)) return "[REDACTED]";
+    if (key && isDiagnosticCredentialKey(key)) return "[REDACTED]";
     if (remainingNodes <= 0) return "[truncated: diagnostic node limit]";
     remainingNodes--;
     if (typeof input === "string") return scrubString(input);

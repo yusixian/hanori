@@ -628,3 +628,202 @@ it("does not let an editor reset a finite Issue policy by omitting the field", (
     }).githubToolsConfig?.createIssueConfirmationTtlMinutes,
   ).toBe(60);
 });
+
+describe("task Agent configuration", () => {
+  it("persists explicit no-tools defaults and preserves them for older clients", () => {
+    const config = {
+      modelId: "task-model",
+      toolNames: [],
+      timeoutMs: 60_000,
+      maxSteps: 12,
+      systemPrompt: "Run approved plans",
+    };
+    const stored = absorb(null, buildPatch({ enabled: false, taskAgentConfig: config }));
+    expect(stored.taskAgentConfig).toEqual(config);
+    expect(toAiConfigPublic(stored).taskAgentConfig).toEqual(config);
+    expect(absorb(stored, buildPatch({ enabled: false })).taskAgentConfig).toEqual(config);
+  });
+  it("rejects changes from non-administrators", () => {
+    expect(() =>
+      absorbAiConfigPatch({
+        current: null,
+        patch: buildPatch({ enabled: false, taskAgentConfig: { toolNames: ["generate_image"] } }),
+        actorRole: "member",
+        encryptionKey: ENCRYPTION_KEY,
+      }),
+    ).toThrow("只有 owner 或 admin");
+  });
+  it("remaps temporary provider IDs without storing credentials in the task config", () => {
+    const stored = absorb(
+      null,
+      buildPatch({
+        enabled: false,
+        providers: [
+          {
+            id: "__new_task",
+            label: "Tasks",
+            baseURL: "https://example.com/v1",
+            providerFormat: "openai",
+            defaultModel: "task-model",
+            apiKey: "private-key",
+          },
+        ],
+        taskAgentConfig: { providerId: "__new_task", modelId: "task-model" },
+      }),
+    );
+    expect(stored.taskAgentConfig?.providerId).toEqual(stored.providers![0]!.id);
+    expect(JSON.stringify(toAiConfigPublic(stored).taskAgentConfig)).not.toContain("private-key");
+  });
+  it("rejects an unknown configured provider", () => {
+    expect(() =>
+      absorb(null, buildPatch({ enabled: false, taskAgentConfig: { providerId: "missing" } })),
+    ).toThrow("Task Agent provider does not exist");
+  });
+  it.each([{ timeoutMs: 0 }, { timeoutMs: 2_147_483_648 }, { maxSteps: 0 }, { toolNames: [""] }])(
+    "validates executable limits: %j",
+    (taskAgentConfig) => {
+      expect(() => buildPatch({ enabled: false, taskAgentConfig })).toThrow();
+    },
+  );
+});
+
+describe("named task Agents", () => {
+  it("persists full execution configuration and rejects non-admin changes", () => {
+    const agentToolsConfig = {
+      enabled: true,
+      agents: {
+        researcher: {
+          enabled: true,
+          modelId: "research",
+          toolNames: [],
+          timeoutMs: 2000,
+          maxSteps: 3,
+        },
+      },
+    };
+    const stored = absorb(null, buildPatch({ enabled: false, agentToolsConfig }));
+    expect(stored.agentToolsConfig).toEqual(agentToolsConfig);
+    expect(absorb(stored, buildPatch({ enabled: false })).agentToolsConfig).toEqual(
+      agentToolsConfig,
+    );
+    expect(() =>
+      absorbAiConfigPatch({
+        current: null,
+        patch: buildPatch({ enabled: false, agentToolsConfig }),
+        actorRole: "member",
+        encryptionKey: ENCRYPTION_KEY,
+      }),
+    ).toThrow("只有 owner 或 admin");
+  });
+});
+
+describe("model recovery configuration", () => {
+  it.each([-1, 3, 1.5, "1"])(
+    "rejects invalid retry budget %s globally and per group",
+    (maxRetries) => {
+      expect(() =>
+        buildPatch({
+          providers: [patchProvider],
+          enabled: false,
+          modelRecovery: { maxRetries, fallback: null },
+        }),
+      ).toThrow();
+      expect(() =>
+        buildPatch({
+          providers: [patchProvider],
+          enabled: false,
+          groupOverrides: {
+            "-100": {
+              chatId: -100,
+              whitelisted: true,
+              modelRecovery: { maxRetries, fallback: null },
+            },
+          },
+        }),
+      ).toThrow();
+    },
+  );
+  it("round-trips full group overrides, preserves older clients, and resets to inheritance explicitly", () => {
+    const global = { maxRetries: 1, fallback: { providerId: "provider-1", modelId: "model-a" } };
+    const group = { maxRetries: 0, fallback: null };
+    const initial = absorb(
+      storedConfig(),
+      buildPatch({
+        providers: [patchProvider],
+        modelRecovery: global,
+        groupOverrides: { "-100": { chatId: -100, whitelisted: true, modelRecovery: group } },
+      }),
+    );
+    expect(toAiConfigPublic(initial)).toMatchObject({
+      modelRecovery: global,
+      groupOverrides: { "-100": { modelRecovery: group } },
+    });
+    const preserved = absorb(
+      initial,
+      buildPatch({
+        providers: [patchProvider],
+        groupOverrides: { "-100": { chatId: -100, whitelisted: true } },
+      }),
+    );
+    expect(preserved.modelRecovery).toEqual(global);
+    expect(preserved.groupOverrides["-100"]?.modelRecovery).toEqual(group);
+    const reset = absorb(
+      preserved,
+      buildPatch({
+        providers: [patchProvider],
+        groupOverrides: { "-100": { chatId: -100, whitelisted: true, modelRecovery: null } },
+      }),
+    );
+    expect(reset.groupOverrides["-100"]?.modelRecovery).toBeUndefined();
+    expect(reset.modelRecovery).toEqual(global);
+  });
+  it.each([
+    { providerId: "missing", modelId: "model-a" },
+    { providerId: "provider-1", modelId: "missing" },
+  ])("rejects an unavailable fallback pair %j", (fallback) => {
+    expect(() =>
+      absorb(
+        storedConfig(),
+        buildPatch({ providers: [patchProvider], modelRecovery: { maxRetries: 1, fallback } }),
+      ),
+    ).toThrow("configured model");
+    expect(() =>
+      absorb(
+        storedConfig(),
+        buildPatch({
+          providers: [patchProvider],
+          groupOverrides: {
+            "-100": { chatId: -100, whitelisted: true, modelRecovery: { maxRetries: 1, fallback } },
+          },
+        }),
+      ),
+    ).toThrow("configured model");
+  });
+  it("remaps new provider ids in both global and group fallback selections", () => {
+    const recovery = {
+      maxRetries: 2,
+      fallback: { providerId: "__new_fallback", modelId: "model-b" },
+    };
+    const result = absorb(
+      storedConfig(),
+      buildPatch({
+        providers: [
+          patchProvider,
+          {
+            ...patchProvider,
+            id: "__new_fallback",
+            apiKey: "new-key",
+            defaultModel: "model-b",
+            models: [{ id: "model-b" }],
+          },
+        ],
+        modelRecovery: recovery,
+        groupOverrides: { "-100": { chatId: -100, whitelisted: true, modelRecovery: recovery } },
+      }),
+    );
+    const id = result.providers?.find((provider) => provider.defaultModel === "model-b")?.id;
+    expect(id).toMatch(UUID_PATTERN);
+    expect(result.modelRecovery?.fallback?.providerId).toBe(id);
+    expect(result.groupOverrides["-100"]?.modelRecovery?.fallback?.providerId).toBe(id);
+  });
+});

@@ -1,3 +1,4 @@
+import { BotScheduledTasksPage } from "./pages/timers/scheduled-tasks-panel";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { AppLayout } from "@/components/layout/app-layout";
@@ -85,9 +86,6 @@ const PluginsPage = lazy(() => import("@/pages/plugins").then((m) => ({ default:
 const McpServersPage = lazy(() =>
   import("@/pages/mcp-servers").then((m) => ({ default: m.McpServersPage })),
 );
-const LarkSetupGuidePage = lazy(() =>
-  import("@/pages/guides/lark-setup").then((m) => ({ default: m.LarkSetupGuidePage })),
-);
 const HarnessPage = lazy(() => import("@/pages/harness").then((m) => ({ default: m.HarnessPage })));
 const SettingsPage = lazy(() =>
   import("@/pages/settings").then((m) => ({ default: m.SettingsPage })),
@@ -148,6 +146,7 @@ export function AdminPanelApp() {
               <Route path="/bots/:botId/edit" element={<BotEditPage />} />
               <Route path="/bots/:botId/ai" element={<BotAiSettingsPage />} />
               <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+              <Route path="/bots/:botId/tasks" element={<BotScheduledTasksPage />} />
               <Route path="/bots/:botId/skills" element={<BotSkillsPage />} />
               <Route path="/bots/:botId/conversations" element={<BotConversationsPage />} />
               <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
@@ -176,7 +175,6 @@ export function AdminPanelApp() {
               <Route path="/plugins" element={<PluginsPage />} />
               <Route path="/mcp-servers" element={<McpServersPage />} />
               <Route path="/harness/*" element={<HarnessPage />} />
-              <Route path="/guides/lark-setup" element={<LarkSetupGuidePage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
             <Route

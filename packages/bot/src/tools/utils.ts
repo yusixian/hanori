@@ -8,13 +8,19 @@ export { normalizeUrlForCache } from "./descriptors.js";
 
 /**
  * Convert a Zod v4 schema to an AI SDK-compatible JSON Schema.
- * The AI SDK internally uses `zod-to-json-schema` (designed for Zod v3),
- * which produces invalid output with Zod v4. This helper uses Zod v4's
- * native `z.toJSONSchema()` and wraps the result with AI SDK's `jsonSchema()`.
+ * Keep the Zod validator attached: JSON Schema defaults alone do not populate
+ * omitted tool arguments, and JSON Schema without a validator does not reject bad input.
  */
 export function zodToAiSchema<T extends z.ZodType>(schema: T) {
   const json = z.toJSONSchema(schema, { unrepresentable: "any", io: "input" });
-  return jsonSchema<z.infer<T>>(json as JSONValue);
+  return jsonSchema<z.infer<T>>(json as JSONValue, {
+    validate: async (value) => {
+      const parsed = await schema.safeParseAsync(value);
+      return parsed.success
+        ? { success: true, value: parsed.data }
+        : { success: false, error: parsed.error };
+    },
+  });
 }
 
 /**

@@ -201,6 +201,7 @@ function stubAiSettingsFetchWithDeferredConfig() {
 }
 
 beforeEach(async () => {
+  await page.viewport(1440, 900);
   await i18n.changeLanguage("en");
 });
 
@@ -834,4 +835,79 @@ test("keeps save and category navigation reachable in a narrow desktop workspace
   await expect.element(prompt).toHaveValue("Keep this draft while switching categories");
   await save.click();
   await expect.element(page.getByText("All changes saved", { exact: true })).toBeVisible();
+});
+
+test.each([1440, 390])("recovery configuration saves explicit fallback on %dpx", async (width) => {
+  await page.viewport(width, width === 390 ? 844 : 900);
+  const config: AiConfigPublic = {
+    ...DEFAULT_CONFIG,
+    providers: [
+      {
+        id: "provider-a",
+        label: "Example Provider",
+        baseURL: "https://example.invalid/v1",
+        hasApiKey: true,
+        providerFormat: "openai",
+        defaultModel: "model-a",
+        models: [{ id: "model-a" }, { id: "model-backup" }],
+      },
+    ],
+  };
+  const savedRecovery = {
+    maxRetries: 2,
+    fallback: { providerId: "provider-a", modelId: "model-backup" },
+  };
+  const fetchMock = stubAiSettingsFetch({
+    config,
+    selection: GLOBAL_SELECTION,
+    saveResponse: () => {
+      config.modelRecovery = savedRecovery;
+      return Response.json({ ok: true, data: config, revision: "revision-2" });
+    },
+  });
+  const { rendered } = await renderAiSettings("/bots/test-id/ai?section=providers");
+  await page.getByRole("checkbox", { name: "Use a fallback model" }).click();
+  await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await page.getByRole("combobox", { name: "Fallback provider" }).click();
+  await page.getByRole("option", { name: "Example Provider", exact: true }).click();
+  await page.getByRole("combobox", { name: "Fallback model", exact: true }).click();
+  await page.getByRole("option", { name: "model-backup", exact: true }).click();
+  await page.getByRole("combobox", { name: "Extra retries per turn" }).click();
+  await page.getByRole("option", { name: "Retries: 2", exact: true }).click();
+  await page
+    .getByRole("heading", { name: "Retries and fallback" })
+    .element()
+    .scrollIntoView({ block: "start" });
+  await expect
+    .element(page.getByLabelText("Fallback model", { exact: true }))
+    .toHaveTextContent("model-backup");
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+  if (import.meta.env.VITE_RECOVERY_SCREENSHOTS) {
+    page
+      .getByRole("heading", { name: "Retries and fallback" })
+      .element()
+      .parentElement!.parentElement!.scrollIntoView({ block: "center" });
+    window.scrollBy(0, -100);
+    await page
+      .elementLocator(
+        page.getByRole("heading", { name: "Retries and fallback" }).element().parentElement!
+          .parentElement!,
+      )
+      .screenshot({ path: `/tmp/recovery-208-global-${width}.png` });
+  }
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const saveCall = fetchMock.mock.calls.find(
+    ([input, init]) => String(input).endsWith("/ai-config") && requestMethod(input, init) === "PUT",
+  );
+  expect(saveCall).toBeDefined();
+  expect(JSON.parse(String(saveCall?.[1]?.body)).modelRecovery).toEqual(savedRecovery);
+  await expect.element(page.getByText("All changes saved", { exact: true })).toBeVisible();
+  await rendered.unmount();
+  await renderAiSettings("/bots/test-id/ai?section=providers");
+  await expect
+    .element(page.getByRole("combobox", { name: "Fallback model", exact: true }))
+    .toHaveTextContent("model-backup");
+  await expect
+    .element(page.getByRole("combobox", { name: "Extra retries per turn" }))
+    .toHaveTextContent("Retries: 2");
 });

@@ -1,3 +1,9 @@
+import { createQuoteCommands } from "./commands/quote.js";
+import { QuoteService, type QuoteDependencies } from "./services/quote-service.js";
+export { QuoteService, type QuoteDependencies } from "./services/quote-service.js";
+export { captureQuoteSource } from "./utils/quote-source.js";
+import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
+import { createScheduledTaskConfirmationHandler } from "./handlers/scheduled-task-confirmation.js";
 import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
 import type {
   BotLogEntry,
@@ -66,6 +72,10 @@ import {
 import { getUpdateConstraint, hasLeadingBotCommand } from "./middleware/update-constraint.js";
 import { AiIngressLock } from "./services/ai-ingress-lock.js";
 import { createMediaConfirmationCallbackQueryHandler } from "./handlers/media-confirmation.js";
+import {
+  createImageConfirmationCallbackQueryHandler,
+  createImageConfirmationReplyHandler,
+} from "./handlers/image-confirmation.js";
 import { createOutgoingImageSafety } from "./services/outgoing-image-safety.js";
 import type { NsfwChecker } from "./services/nsfw-checker.js";
 import { formatImageGenerationCaption } from "./utils/image-generation-delivery.js";
@@ -114,6 +124,8 @@ export interface TimerCallbacks {
 }
 
 export interface BotConfig {
+  quotes?: QuoteDependencies;
+  scheduledTasks?: ScheduledTaskPort;
   nsfwChecker?: NsfwChecker;
   nsfwThreshold?: number;
   runtimeDiagnostics?: RuntimeDiagnosticsPort;
@@ -371,6 +383,68 @@ export function createBot(config: BotConfig) {
       if (!(await mediaConfirmationHandler(ctx))) await next();
     });
   }
+  const scheduledTasks = config.scheduledTasks ?? config.aiReply?.scheduledTasks;
+  if (scheduledTasks) {
+    const handler = createScheduledTaskConfirmationHandler({
+      api: bot.api,
+      botId: config.botId,
+      port: scheduledTasks,
+      adminIds: adminChatIds,
+      isDelegatedGroupAdmin: config.aiReply?.isDelegatedGroupAdmin,
+    });
+    bot.on("callback_query:data", async (ctx, next) => {
+      if (!(await handler(ctx))) await next();
+    });
+  }
+  const imageGenerationPort = config.aiReply?.imageGenerationPort;
+  if (imageGenerationPort) {
+    const imageConfirmationHandler = createImageConfirmationCallbackQueryHandler({
+      api: bot.api,
+      botId: config.botId,
+      adminIds: adminChatIds,
+      port: imageGenerationPort,
+    });
+    bot.on("callback_query:data", async (ctx, next) => {
+      if (!(await imageConfirmationHandler(ctx))) await next();
+    });
+    const imageConfirmationReplyHandler = createImageConfirmationReplyHandler({
+      api: bot.api,
+      botId: config.botId,
+      adminIds: adminChatIds,
+      port: imageGenerationPort,
+    });
+    bot.on("message", async (ctx, next) => {
+      const message = ctx.message;
+      if (
+        await imageConfirmationReplyHandler({
+          message: {
+            message_id: message.message_id,
+            chat: message.chat,
+            message_thread_id: message.message_thread_id,
+            is_topic_message: message.is_topic_message,
+            reply_to_message: message.reply_to_message,
+          },
+          from: ctx.from,
+          text: message.text ?? message.caption,
+        })
+      )
+        return;
+      await next();
+    });
+  }
+
+  let quoteSources: (
+    chatId: number,
+    threadId: number | null,
+  ) => Promise<readonly import("@cos-tool-bot/shared").QuoteSource[]> = async () => [];
+  const quotes = config.quotes
+    ? new QuoteService(config.quotes, {
+        api: bot.api,
+        privacy: config.privacy,
+        getBufferedSources: (chatId, threadId) => quoteSources(chatId, threadId),
+        safety: { checker: config.nsfwChecker, threshold: config.nsfwThreshold },
+      })
+    : undefined;
 
   // Build AI handler + runtime state (created before commands so state is available)
   let aiHandler: ReturnType<typeof createAiReplyHandler>["handler"] | undefined;
@@ -429,6 +503,7 @@ export function createBot(config: BotConfig) {
     const result = createAiReplyHandler(
       {
         ...config.aiReply,
+        quotes,
         runtimeDiagnostics: config.runtimeDiagnostics,
         getDiagnosticTraceId: (ctx) => diagnosticTraces.get(ctx),
         privacy: config.privacy,
@@ -445,6 +520,7 @@ export function createBot(config: BotConfig) {
       },
       { ingressLock: aiIngressLock },
     );
+    quoteSources = result.getQuoteSources;
     aiHandler = result.handler;
     aiState = result.state;
     aiSetModelForChat = result.setModelForChat;
@@ -536,6 +612,14 @@ export function createBot(config: BotConfig) {
           : undefined,
       );
     });
+  }
+  if (quotes) {
+    const commands = createQuoteCommands(quotes, {
+      privacy: config.privacy,
+      adminIds: adminChatIds,
+    });
+    commandRegistry.register("q", commands.q);
+    commandRegistry.register("qcolor", commands.qcolor);
   }
   commandRegistry.register(
     "md2tg",
@@ -791,6 +875,7 @@ export function createBot(config: BotConfig) {
     const issueProposalHandler = createGitHubIssueProposalCallbackHandler(
       bot.api,
       config.githubIssueProposals,
+      config.onLog,
     );
     bot.on("callback_query:data", async (ctx, next) => {
       if (!(await issueProposalHandler(ctx))) await next();
@@ -855,7 +940,10 @@ export function createBot(config: BotConfig) {
   });
 
   harness?.onBotReady(createHarnessTelegram(bot.api));
-  botDisposers.set(bot, () => disposeAiRuntime?.());
+  botDisposers.set(bot, async () => {
+    quotes?.close();
+    await disposeAiRuntime?.();
+  });
   return bot;
 }
 
@@ -930,6 +1018,7 @@ export {
   isBuiltInSkillId,
   listBotSkills,
   resolveBotSkills,
+  resolveBuiltInSkills,
   type BotSkillDefinition,
   type BotSkillSummary,
 } from "./skills/catalog.js";
@@ -961,3 +1050,10 @@ export {
 export type { McpToolEntry, McpToolsOptions } from "./tools/mcp.js";
 export { sendLocalVideoFile } from "./services/video-download-delivery.js";
 export { GitHubClient, type GitHubIssue } from "./services/github-client.js";
+
+export {
+  executeScheduledTaskWithBotConfig,
+  type TaskHistoryMessage,
+} from "./services/scheduled-task-executor.js";
+
+export { capturePromptConfig, snapshotDataFiles } from "./services/prompt-snapshot.js";

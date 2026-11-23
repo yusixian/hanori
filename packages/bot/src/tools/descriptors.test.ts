@@ -9,6 +9,7 @@ import {
 } from "./descriptors.js";
 
 const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
+  "create_quote_sticker",
   "react_to_message",
   "send_sticker",
   "send_photo",
@@ -58,6 +59,7 @@ const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
   "list_image_presets",
   "get_image_generation",
   "github_repository",
+  "github_list_repositories",
   "github_read_file",
   "github_list_tree",
   "github_list_issues",

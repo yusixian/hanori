@@ -3,6 +3,7 @@ import type {
   PluginTool,
   VideoDownloadActor,
   VideoDownloadPort,
+  VideoDownloadProvider,
 } from "@cos-tool-bot/shared";
 import { z } from "zod";
 import { VideoDownloadError } from "../video-downloads/contracts.js";
@@ -12,6 +13,7 @@ const jobSchema = z.object({ id: z.uuid() }).strict();
 export function createVideoDownloadTools(
   context: PluginContext,
   port: VideoDownloadPort,
+  provider: VideoDownloadProvider = "bilibili",
 ): PluginTool[] {
   if (context.actor.userId === undefined) return [];
   const actor: VideoDownloadActor = {
@@ -56,10 +58,11 @@ export function createVideoDownloadTools(
   return [
     entry(
       "download_video",
-      "Create a background download of one Bilibili video and send the MP4 to this Telegram chat/topic only when the administrator explicitly asks for download and delivery. The host binds identity and destination. Returns a job immediately after validation; no automatic ASR, playlists, live streams, DRM bypass or arbitrary output paths. Do not repeatedly create jobs to retry failures or unknown delivery outcomes.",
+      `Create a background download of one ${provider === "bilibili" ? "Bilibili" : "yt-dlp supported"} video and send the MP4 to this Telegram chat/topic only when the administrator explicitly asks for download and delivery. The host binds identity and destination. Returns a job after metadata validation; no automatic ASR, playlists, live streams or arbitrary output paths. Site access, format and Telegram limits apply. Do not repeatedly create jobs to retry failures or unknown delivery outcomes.`,
       z.object({ sourceUrl: z.string().trim().min(1).max(2048) }).strict(),
       "mutating",
-      (input, signal) => port.create(actor, input, signal),
+      (input, signal) =>
+        port.create(actor, provider === "bilibili" ? input : { ...input, provider }, signal),
     ),
     entry(
       "get_video_download",

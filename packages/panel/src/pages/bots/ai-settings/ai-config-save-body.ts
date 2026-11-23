@@ -1,4 +1,8 @@
-import { DEFAULT_ENGAGEMENT_POLICY, toWebToolsConfigUpdate } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_ENGAGEMENT_POLICY,
+  DEFAULT_MODEL_RECOVERY,
+  toWebToolsConfigUpdate,
+} from "@cos-tool-bot/shared";
 import type { client } from "@/lib/client";
 import type {
   AiConfigPublic,
@@ -57,6 +61,7 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
     baseURL: activeProvider?.baseURL ?? config.baseURL,
     providerFormat: activeProvider?.providerFormat ?? config.providerFormat,
     model: activeProvider?.defaultModel ?? config.model,
+    modelRecovery: config.modelRecovery ?? DEFAULT_MODEL_RECOVERY,
     systemPrompt: config.systemPrompt,
     behavioralPrompt: config.behavioralPrompt || undefined,
     groupBehavioralPrompt: config.groupBehavioralPrompt || undefined,
@@ -70,7 +75,11 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
     groupOverrides: Object.fromEntries(
       Object.entries(config.groupOverrides).map(([id, override]) => [
         id,
-        { ...override, engagement: override.engagement ?? null },
+        {
+          ...override,
+          engagement: override.engagement ?? null,
+          modelRecovery: override.modelRecovery ?? null,
+        },
       ]),
     ),
     conversationConfig: config.conversationConfig,

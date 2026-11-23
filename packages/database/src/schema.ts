@@ -1,7 +1,9 @@
+import type { PromptSnapshot, PromptPreviewSnapshot } from "@cos-tool-bot/shared";
 import type {
   AiConfigStored,
+  ScheduledTaskPlan,
+  AgentExecutionConfig,
   CosInsideConfig,
-  EmailForwardConfig,
   EngagementContextMessage,
   EngagementLabel,
   EngagementParticipationDecision,
@@ -21,7 +23,6 @@ import type {
   VideoDownloadStatus,
   TranscriptDocument,
   AssetSafety,
-  LarkWebhookConfig,
   UsageBucketCharge,
   UsageLimits,
 } from "@cos-tool-bot/shared";
@@ -85,14 +86,16 @@ export const pluginInstallations = pgTable(
 );
 
 export const bots = pgTable("bots", {
+  activePromptVersionId: uuid("active_prompt_version_id"),
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   platform: text("platform").notNull().default("telegram"),
   encryptedToken: text("encrypted_token").notNull(),
   adminChatIds: json("admin_chat_ids").$type<number[]>().notNull().default([]),
   aiConfig: json("ai_config").$type<AiConfigStored>(),
-  larkWebhookConfig: json("lark_webhook_config").$type<LarkWebhookConfig>(),
-  emailForwardConfig: json("email_forward_config").$type<EmailForwardConfig>(),
+  // Retained for existing installations. Retired integration data is excluded from Bot exports.
+  larkWebhookConfig: json("lark_webhook_config"),
+  emailForwardConfig: json("email_forward_config"),
   cosInsideConfig: json("cos_inside_config").$type<CosInsideConfig>(),
   isActive: boolean("is_active").notNull().default(true),
   miniAppEnabled: boolean("mini_app_enabled").notNull().default(false),
@@ -177,10 +180,12 @@ export const videoDownloadJobs = pgTable(
     configRevision: integer("config_revision").notNull(),
     installationRevision: integer("installation_revision").notNull(),
     sourceUrl: text("source_url").notNull(),
+    provider: text("provider").$type<"bilibili" | "ytdlp">().notNull().default("bilibili"),
+    // Existing Bilibili IDs remain intact; yt-dlp stores [extractor, id] as a JSON tuple.
     bvid: text("bvid").notNull(),
     part: integer("part").notNull(),
     title: text("title").notNull(),
-    durationSeconds: integer("duration_seconds").notNull(),
+    durationSeconds: integer("duration_seconds"),
     status: text("status").$type<VideoDownloadStatus>().notNull().default("queued"),
     error: text("error"),
     bytes: integer("bytes"),
@@ -1789,4 +1794,76 @@ export const harnessTopicMessages = pgTable(
     index("harness_topic_messages_message_idx").on(t.chatId, t.messageId),
     index("harness_topic_messages_created_idx").on(t.createdAt),
   ],
+);
+
+export const scheduledTasks = pgTable(
+  "scheduled_tasks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    threadId: integer("thread_id"),
+    proposerId: bigint("proposer_id", { mode: "number" }).notNull(),
+    proposerName: text("proposer_name").notNull(),
+    approvedByUserId: bigint("approved_by_user_id", { mode: "number" }),
+    activePlan: json("active_plan").$type<ScheduledTaskPlan>(),
+    pendingPlan: json("pending_plan").$type<ScheduledTaskPlan>(),
+    revision: integer("revision").notNull().default(0),
+    pendingVersion: integer("pending_version"),
+    lastTrialVersion: integer("last_trial_version"),
+    expiresAt: timestamp("expires_at"),
+    confirmationMessageId: bigint("confirmation_message_id", { mode: "number" }),
+    status: text("status").notNull().default("pending"),
+    nextRunAt: timestamp("next_run_at"),
+    runningRunId: uuid("running_run_id"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("scheduled_tasks_due_idx").on(t.status, t.nextRunAt),
+    index("scheduled_tasks_scope_idx").on(t.botId, t.chatId),
+  ],
+);
+
+export const scheduledTaskRuns = pgTable(
+  "scheduled_task_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => scheduledTasks.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    trial: boolean("trial").notNull().default(false),
+    manual: boolean("manual").notNull().default(false),
+    messageIds: json("message_ids").$type<number[]>().notNull().default([]),
+    scheduledFor: timestamp("scheduled_for").notNull(),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    finishedAt: timestamp("finished_at"),
+    plan: json("plan").$type<ScheduledTaskPlan>().notNull(),
+    agent: json("agent").$type<AgentExecutionConfig>().notNull(),
+    output: text("output"),
+    error: text("error"),
+  },
+  (t) => [index("scheduled_task_runs_task_idx").on(t.taskId, t.startedAt)],
+);
+
+export const promptVersions = pgTable(
+  "prompt_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    applicationVersion: text("application_version").notNull(),
+    snapshot: json("snapshot").$type<PromptSnapshot>().notNull(),
+    previews: json("previews")
+      .$type<{ private: PromptPreviewSnapshot; group: PromptPreviewSnapshot }>()
+      .notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [index("prompt_versions_bot_idx").on(table.botId, table.createdAt)],
 );

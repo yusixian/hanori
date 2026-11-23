@@ -1,3 +1,4 @@
+import type { AgentExecutionConfig } from "./scheduled-tasks.js";
 import type { AiExecutionConfig, TimeoutConfig } from "./ai-execution.js";
 import type { AiProviderEntry, AiProviderEntryPublic, ModelEntry } from "./ai-providers.js";
 import type {
@@ -37,7 +38,17 @@ export interface AiTriggerConfig {
   randomReplyCooldown: number;
 }
 
+export interface ModelRecoveryConfig {
+  /** Shared additional same-model attempts across one conversational turn (0–2). */
+  maxRetries: number;
+  fallback: { providerId: string; modelId: string } | null;
+}
+
+export const DEFAULT_MODEL_RECOVERY: ModelRecoveryConfig = { maxRetries: 1, fallback: null };
+
 export interface AiGroupOverride {
+  /** Missing means inherit the global policy. */
+  modelRecovery?: ModelRecoveryConfig;
   engagement?: Partial<EngagementPolicy>;
   chatId: number;
   chatTitle?: string;
@@ -49,11 +60,13 @@ export interface AiGroupOverride {
   maxContextMessages?: number;
   groupHistoryMaxTokens?: number;
   imageGenerationEnabled?: boolean;
+  imageGenerationConfirmation?: "always" | "never";
   /** Controls whether safe Provider/model labels are exposed in the Mini App. */
   aiSelectionDisplay?: "inherit" | "show" | "hide";
 }
 
 export interface AiConfigStored {
+  modelRecovery?: ModelRecoveryConfig;
   engagement?: EngagementConfigStored;
   enabled: boolean;
   /** @deprecated migrated into providers[0].encryptedApiKey — kept for rollback compat */
@@ -82,7 +95,10 @@ export interface AiConfigStored {
   /** Defaults to true; false restores the legacy individual search tools. */
   unifiedSearchEnabled?: boolean;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
+  imageGenerationConfirmation?: "always" | "never";
   agentToolsConfig?: AgentToolsConfig;
+  /** Task defaults are resolved fresh for each run; explicit task fields override them. */
+  taskAgentConfig?: AgentExecutionConfig;
   githubToolsConfig?: GitHubToolsConfigStored;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
@@ -103,6 +119,7 @@ export interface AiConfigStored {
 }
 
 export interface AiConfigPublic {
+  modelRecovery?: ModelRecoveryConfig;
   engagement?: EngagementConfigPublic;
   enabled: boolean;
   /** @deprecated reflects providers[activeProviderId].hasApiKey for backward compat */
@@ -128,7 +145,10 @@ export interface AiConfigPublic {
   webToolsConfig?: WebToolsConfigPublic;
   unifiedSearchEnabled?: boolean;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
+  imageGenerationConfirmation?: "always" | "never";
   agentToolsConfig?: AgentToolsConfig;
+  /** Task defaults are resolved fresh for each run; explicit task fields override them. */
+  taskAgentConfig?: AgentExecutionConfig;
   githubToolsConfig?: GitHubToolsConfigPublic;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;

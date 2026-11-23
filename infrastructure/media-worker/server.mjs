@@ -86,7 +86,14 @@ async function hashFile(file, stat, signal, errorCode) {
   return hash.digest("hex");
 }
 
-async function readVerifiedInput(path, digest, signal, owner, maxBytes = INPUT_LIMIT) {
+async function readVerifiedInput(
+  path,
+  digest,
+  signal,
+  owner,
+  maxBytes = INPUT_LIMIT,
+  generic = false,
+) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = await file.stat();
@@ -95,13 +102,18 @@ async function readVerifiedInput(path, digest, signal, owner, maxBytes = INPUT_L
     if (owner !== undefined && (stat.uid !== owner || stat.mode & 0o022)) fail("invalid_input");
     const header = Buffer.alloc(16);
     const { bytesRead } = await file.read(header, 0, header.length, 0);
-    if (
-      bytesRead !== header.length ||
-      !header.subarray(4, 8).equals(Buffer.from("ftyp")) ||
-      header.readUInt32BE(0) < 16 ||
-      header.readUInt32BE(0) > stat.size
-    )
-      fail("invalid_input");
+    const mp4 =
+      header.subarray(4, 8).equals(Buffer.from("ftyp")) &&
+      header.readUInt32BE(0) >= 16 &&
+      header.readUInt32BE(0) <= stat.size;
+    const otherContainer =
+      generic &&
+      (header.readUInt32BE(0) === 0x1a45dfa3 ||
+        header[0] === 0x47 ||
+        ["OggS", "fLaC", "RIFF"].includes(header.subarray(0, 4).toString()) ||
+        ["FLV", "ID3"].includes(header.subarray(0, 3).toString()) ||
+        (header[0] === 0xff && (header[1] & 0xe0) === 0xe0));
+    if (bytesRead !== header.length || (!mp4 && !otherContainer)) fail("invalid_input");
     if ((await hashFile(file, stat, signal, "invalid_input")) !== digest) fail("checksum_mismatch");
     return stat;
   } finally {
@@ -373,6 +385,7 @@ async function probeVideo(path, signal, spawnProcess, expected) {
 }
 
 async function muxVideo(job, body, options, signal) {
+  if (body.generic === true) return normalizeVideo(job, body, options, signal);
   const directory = join(options.jobDirectory, "video-downloads", job);
   const video = join(directory, "video.mp4");
   const audio = join(directory, "audio.m4a");
@@ -504,6 +517,177 @@ async function muxVideo(job, body, options, signal) {
   }
 }
 
+// Probe/convert only local containers. Playlist/demuxer indirection stays disabled in this worker.
+const LOCAL_VIDEO_FORMATS = "mov,matroska,webm,mpegts,aac,mp3,ogg,flac,avi,flv";
+function localVideoArgs(path, mov = true) {
+  return [
+    "-protocol_whitelist",
+    "file",
+    "-format_whitelist",
+    LOCAL_VIDEO_FORMATS,
+    ...(mov ? ["-enable_drefs", "0", "-use_absolute_path", "0"] : []),
+    "-i",
+    path,
+  ];
+}
+
+async function normalizeVideo(job, body, options, signal) {
+  const directory = join(options.jobDirectory, "video-downloads", job);
+  const output = join(directory, "output.mp4");
+  let outputCreated = false;
+  try {
+    checkAbort(signal);
+    await safeDirectory(directory);
+    const owner = (await lstat(directory)).uid;
+    const sources = [
+      [join(directory, "video.mp4"), body.videoSha256],
+      ...(body.audioSha256 ? [[join(directory, "audio.m4a"), body.audioSha256]] : []),
+    ];
+    const originals = [];
+    const media = [];
+    let bytes = 0;
+    for (const [path, digest] of sources) {
+      const stat = await readVerifiedInput(path, digest, signal, owner, INPUT_LIMIT, true);
+      originals.push(stat);
+      bytes += stat.size;
+      if (bytes > INPUT_LIMIT || bytes > body.maxBytes) fail("invalid_input");
+      const parsed = JSON.parse(
+        await runProcess(
+          "ffprobe",
+          [
+            "-v",
+            "error",
+            "-threads",
+            "1",
+            ...localVideoArgs(path),
+            "-show_entries",
+            "format=duration,format_name:stream=codec_name,codec_type",
+            "-of",
+            "json",
+          ],
+          { signal, timeoutMs: 15_000, spawnProcess: options.spawnProcess },
+        ),
+      );
+      const duration = Number(parsed.format?.duration);
+      if (
+        !Number.isFinite(duration) ||
+        duration <= 0 ||
+        duration > body.maxDurationSeconds ||
+        !Array.isArray(parsed.streams)
+      )
+        fail("duration_limit");
+      media.push({
+        duration,
+        streams: parsed.streams,
+        mov: String(parsed.format?.format_name).split(",").includes("mov"),
+      });
+    }
+    const video = media[0].streams.find((s) => s.codec_type === "video");
+    const audioIndex = sources.length === 2 ? 1 : 0;
+    const audio = media[audioIndex].streams.find((s) => s.codec_type === "audio");
+    if (
+      !video ||
+      (sources.length === 2 && (!audio || Math.abs(media[0].duration - media[1].duration) > 2))
+    )
+      fail("invalid_video");
+    const handle = await open(
+      output,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    );
+    outputCreated = true;
+    await handle.close();
+    await runProcess(
+      "ffmpeg",
+      [
+        "-hide_banner",
+        "-v",
+        "error",
+        "-nostdin",
+        "-y",
+        "-threads",
+        "1",
+        ...sources.flatMap(([path], index) => localVideoArgs(path, media[index].mov)),
+        "-map",
+        "0:v:0",
+        ...(audio ? ["-map", `${audioIndex}:a:0`] : ["-an"]),
+        "-c:v",
+        video.codec_name === "h264" ? "copy" : "libx264",
+        ...(video.codec_name === "h264"
+          ? []
+          : ["-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-threads", "1"]),
+        ...(audio ? ["-c:a", audio.codec_name === "aac" ? "copy" : "aac"] : []),
+        "-sn",
+        "-dn",
+        "-map_metadata",
+        "-1",
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        output,
+      ],
+      {
+        signal,
+        timeoutMs: JOB_TIMEOUT,
+        spawnProcess: options.spawnProcess,
+        outputPath: output,
+        maxBytes: body.maxBytes,
+      },
+    );
+    const converted = await probeVideo(
+      output,
+      signal,
+      options.spawnProcess,
+      audio ? ["video", "audio"] : ["video"],
+    );
+    if (
+      converted.duration > body.maxDurationSeconds ||
+      Math.abs(converted.duration - media[0].duration) > 2
+    )
+      fail("duration_limit");
+    for (const [index, [path, digest]] of sources.entries()) {
+      const current = await readVerifiedInput(path, digest, signal, owner, INPUT_LIMIT, true);
+      const original = originals[index];
+      if (
+        current.ino !== original.ino ||
+        current.dev !== original.dev ||
+        current.mtimeMs !== original.mtimeMs ||
+        current.ctimeMs !== original.ctimeMs
+      )
+        fail("invalid_input");
+    }
+    const file = await open(
+      output,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const stat = await file.stat();
+      if (
+        !stat.isFile() ||
+        stat.nlink !== 1 ||
+        stat.size < 16 ||
+        stat.size > body.maxBytes ||
+        (process.getuid && stat.uid !== process.getuid())
+      )
+        fail("invalid_output");
+      return {
+        ok: true,
+        bytes: stat.size,
+        sha256: await hashFile(file, stat, signal, "invalid_output"),
+        durationSeconds: converted.duration,
+      };
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    if (outputCreated) await unlink(output).catch(() => undefined);
+    checkAbort(signal);
+    if (error instanceof MediaWorkerError) throw error;
+    fail("invalid_video");
+  }
+}
+
 async function jsonBody(request, signal, video = false) {
   checkAbort(signal);
   const data = await new Promise((resolveBody, reject) => {
@@ -553,7 +737,7 @@ async function jsonBody(request, signal, video = false) {
     fail("invalid_request");
   }
   const keys = video
-    ? ["videoSha256", "audioSha256", "maxDurationSeconds", "maxBytes"]
+    ? ["videoSha256", "audioSha256", "maxDurationSeconds", "maxBytes", "generic"]
     : ["sha256", "maxDurationSeconds"];
   if (
     !body ||
@@ -568,8 +752,10 @@ async function jsonBody(request, signal, video = false) {
     if (
       typeof body.videoSha256 !== "string" ||
       !SHA256.test(body.videoSha256) ||
-      typeof body.audioSha256 !== "string" ||
-      !SHA256.test(body.audioSha256) ||
+      (body.generic !== undefined && body.generic !== true) ||
+      (body.audioSha256 === undefined
+        ? body.generic !== true
+        : typeof body.audioSha256 !== "string" || !SHA256.test(body.audioSha256)) ||
       !Number.isSafeInteger(body.maxBytes) ||
       body.maxBytes < 1 ||
       body.maxBytes > 50_000_000

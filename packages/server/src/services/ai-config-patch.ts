@@ -205,6 +205,56 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
       githubToolsConfig.codingModelId,
     );
   }
+  if (
+    patch.taskAgentConfig !== undefined &&
+    JSON.stringify(patch.taskAgentConfig) !== JSON.stringify(current?.taskAgentConfig ?? {}) &&
+    !ownerOrAdmin.has(actorRole)
+  ) {
+    throw new HTTPException(403, { message: "只有 owner 或 admin 可以修改任务 Agent 配置" });
+  }
+  const taskAgentConfig = patch.taskAgentConfig
+    ? {
+        ...patch.taskAgentConfig,
+        providerId: patch.taskAgentConfig.providerId
+          ? (providerIdMap.get(patch.taskAgentConfig.providerId) ??
+            patch.taskAgentConfig.providerId)
+          : undefined,
+      }
+    : current?.taskAgentConfig;
+  if (
+    taskAgentConfig?.providerId &&
+    !(providers ?? existingMigrated?.providers ?? []).some(
+      (provider) => provider.id === taskAgentConfig.providerId,
+    )
+  ) {
+    throw new AiConfigPatchError("Task Agent provider does not exist");
+  }
+  if (
+    patch.agentToolsConfig !== undefined &&
+    JSON.stringify(patch.agentToolsConfig) !== JSON.stringify(current?.agentToolsConfig) &&
+    !ownerOrAdmin.has(actorRole)
+  ) {
+    throw new HTTPException(403, { message: "只有 owner 或 admin 可以修改 Agent 配置" });
+  }
+  const selectedAgentToolsConfig = patch.agentToolsConfig ?? current?.agentToolsConfig;
+  const agentToolsConfig = selectedAgentToolsConfig ? { ...selectedAgentToolsConfig } : undefined;
+  if (agentToolsConfig?.agents) {
+    agentToolsConfig.agents = Object.fromEntries(
+      Object.entries(agentToolsConfig.agents).map(([name, agent]) => {
+        const providerId = agent.providerId
+          ? (providerIdMap.get(agent.providerId) ?? agent.providerId)
+          : undefined;
+        if (
+          providerId &&
+          !(providers ?? existingMigrated?.providers ?? []).some(
+            (provider) => provider.id === providerId,
+          )
+        )
+          throw new AiConfigPatchError("Named Agent provider does not exist");
+        return [name, { ...agent, providerId }];
+      }),
+    );
+  }
   const imageOcrConfig = patch.imageOcrConfig
     ? {
         ...patch.imageOcrConfig,
@@ -231,7 +281,11 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
 
   const groupOverrides = Object.fromEntries(
     Object.entries(patch.groupOverrides).map(([chatId, incoming]) => {
-      const { engagement: engagementPatch, ...rest } = incoming;
+      const { engagement: engagementPatch, modelRecovery: recoveryPatch, ...rest } = incoming;
+      const recovery =
+        recoveryPatch === undefined
+          ? existingMigrated?.groupOverrides[chatId]?.modelRecovery
+          : recoveryPatch;
       const existingEngagement = existingMigrated?.groupOverrides[chatId]?.engagement;
       const engagement =
         engagementPatch === undefined
@@ -243,6 +297,7 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
         chatId,
         {
           ...rest,
+          ...(recovery ? { modelRecovery: { ...recovery } } : {}),
           ...(engagement === null || engagement === undefined ? {} : { engagement }),
         } satisfies AiGroupOverride,
       ];
@@ -250,6 +305,10 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
   );
 
   const updatedAiConfig: AiConfigStored = {
+    modelRecovery:
+      (patch.modelRecovery ?? existingMigrated?.modelRecovery)
+        ? { ...(patch.modelRecovery ?? existingMigrated!.modelRecovery!) }
+        : undefined,
     engagement,
     enabled: patch.enabled,
     encryptedApiKey,
@@ -266,6 +325,10 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     groupBehavioralPrompt: patch.groupBehavioralPrompt,
     triggerConfig: patch.triggerConfig,
     groupOverrides,
+    imageGenerationConfirmation:
+      patch.imageGenerationConfirmation ??
+      existingMigrated?.imageGenerationConfirmation ??
+      "always",
     conversationConfig,
     memoryConfig: patch.memoryConfig,
     stickerPacks: patch.stickerPacks ?? current?.stickerPacks,
@@ -279,7 +342,8 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
       patch.imageGenerationReceiptConfig === undefined
         ? existingMigrated?.imageGenerationReceiptConfig
         : resolveImageGenerationReceiptConfig(patch.imageGenerationReceiptConfig),
-    agentToolsConfig: patch.agentToolsConfig,
+    agentToolsConfig,
+    taskAgentConfig,
     githubToolsConfig,
     artworkToolsConfig: patch.artworkToolsConfig,
     botMemoryConfig: patch.botMemoryConfig,
@@ -312,5 +376,24 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     skillConfig: existingMigrated?.skillConfig,
   };
 
+  for (const recovery of [
+    updatedAiConfig.modelRecovery,
+    ...Object.values(updatedAiConfig.groupOverrides).map((group) => group.modelRecovery),
+  ]) {
+    if (!recovery?.fallback) continue;
+    const target = recovery.fallback;
+    const providerId = providerIdMap.get(target.providerId) ?? target.providerId;
+    const provider = updatedAiConfig.providers?.find((entry) => entry.id === providerId);
+    if (
+      !provider ||
+      !(
+        provider.defaultModel === target.modelId ||
+        provider.models?.some((model) => model.id === target.modelId)
+      )
+    ) {
+      throw new AiConfigPatchError("Fallback Provider/model must reference a configured model");
+    }
+    recovery.fallback = { ...target, providerId };
+  }
   return updatedAiConfig;
 }

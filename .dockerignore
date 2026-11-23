@@ -17,9 +17,9 @@ coverage
 !.git/packed-refs
 !.git/refs/
 !.git/refs/**
-.env
-.env.*
-!.env.example
+**/.env
+**/.env.*
+!**/.env.example
 data
 *.log
 .claude
@@ -38,3 +38,10 @@ downloads
 !packages/*/README.md
 !docs/releases/*.md
 .github
+
+# Local development files
+**/.worktrees
+**/.pnpm-store
+**/.codegraph
+**/.codex
+**/.DS_Store

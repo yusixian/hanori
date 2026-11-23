@@ -33,6 +33,43 @@ describe("buildConversationHistoryBoundary", () => {
 });
 
 describe("ConversationStore.getHistory", () => {
+  it.each([undefined, 12_000])(
+    "scopes topic history before applying budget %s and excludes mixed summaries",
+    async (tokenBudget) => {
+      for (const threadId of [20, null]) {
+        const conditions: ReturnType<PgDialect["sqlToQuery"]>[] = [];
+        const tables: unknown[] = [];
+        const db = {
+          select: () => {
+            const query = {
+              from: (table: unknown) => {
+                tables.push(table);
+                return query;
+              },
+              where: (condition: SQL) => {
+                conditions.push(new PgDialect().sqlToQuery(condition));
+                return query;
+              },
+              orderBy: () => query,
+              limit: async () => [],
+            };
+            return query;
+          },
+        } as unknown as Database;
+        const result = await new ConversationStore(db).getHistory("bot", -100, 20, tokenBudget, {
+          threadId,
+        });
+        expect(result.summary).toBeNull();
+        expect(tables).toEqual([conversationMessages]);
+        expect(conditions[0]!.sql).toContain("->>'threadId'");
+        if (threadId === null) {
+          expect(conditions[0]!.sql).toContain("::jsonb ? 'threadId'");
+          expect(conditions[0]!.sql).toContain("->>'threadId' IS NULL");
+        } else expect(conditions[0]!.params).toContain("20");
+      }
+    },
+  );
+
   it("keeps queued Telegram turns in conversation order", async () => {
     const rows = [
       {
@@ -328,6 +365,27 @@ describe("selectHistoryWithinTokenBudget", () => {
     );
     expect(truncated.messages[0]?.relayOrigin).toEqual(relayOrigin);
     expect(truncated.messages[0]!.content.length).toBeLessThan(5000);
+  });
+
+  it("does not expose a full quote source when its visible history body is truncated", () => {
+    const quoteSource = {
+      version: 1 as const,
+      messageId: 10,
+      threadId: null,
+      capturedAt: 100,
+      text: "long body ".repeat(500),
+      entities: [],
+      author: { key: "user:42", name: "Alice" },
+      privacyUserIds: [42],
+    };
+    const result = selectHistoryWithinTokenBudget(
+      [{ ...rows[0]!, content: quoteSource.text, quoteSource }],
+      undefined,
+      100,
+    );
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.content.length).toBeLessThan(quoteSource.text.length);
+    expect(result.messages[0]?.quoteSource).toBeUndefined();
   });
 
   it("marks a compacted summary as degraded when the raw tail is also truncated", () => {
@@ -1815,4 +1873,43 @@ describe("relay history search", () => {
       expect(row.content).toBe("relay body");
     },
   );
+});
+
+describe("editable assistant history", () => {
+  it("scopes durable lookup and update by bot, chat, role and Telegram ID", async () => {
+    const scopes: Array<{ sql: string; params: unknown[] }> = [];
+    const values: unknown[] = [];
+    const query = {
+      from: () => query,
+      where: (condition: SQL) => {
+        scopes.push(new PgDialect().sqlToQuery(condition));
+        return query;
+      },
+      limit: async () => [{ id: 7 }],
+      set: (value: unknown) => {
+        values.push(value);
+        return query;
+      },
+      returning: async () => [{ id: 7 }],
+    };
+    const store = new ConversationStore({
+      select: () => query,
+      update: () => query,
+    } as unknown as Database);
+    expect(await store.findOwnMessage("bot-a", 42, 12)).toBe(true);
+    await store.updateOwnMessage("bot-a", 42, 12, "corrected");
+    expect(scopes).toHaveLength(2);
+    for (const scope of scopes) {
+      expect(scope.params).toEqual(["bot-a", 42, "assistant", "12"]);
+      expect(scope.sql).toContain("tgMessageId");
+    }
+    expect(values).toEqual([{ content: "corrected", embedding: null }]);
+  });
+  it("does not report synchronization when the history record disappeared", async () => {
+    const query = { set: () => query, where: () => query, returning: async () => [] };
+    const store = new ConversationStore({ update: () => query } as unknown as Database);
+    await expect(store.updateOwnMessage("bot-a", 42, 12, "corrected")).rejects.toThrow(
+      "no longer exists",
+    );
+  });
 });

@@ -11,6 +11,7 @@ export const ACTOR: ImageGenerationActor = {
   chatType: "supergroup",
   isBotAdmin: true,
   isDelegatedGroupAdmin: false,
+  imageConfirmationPolicy: "never",
 };
 
 export function query<T>(limitRows: T[], awaitedRows: unknown[] = limitRows) {

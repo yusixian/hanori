@@ -33,19 +33,22 @@ function setup() {
     list: vi.fn(),
     decide: vi.fn().mockResolvedValue({ ...proposal, status: "completed" }),
   };
+  const onLog = vi.fn();
   const query = {
     id: "query",
     data: `cos:ghi:${proposal.id}:yes`,
     from: { id: 7 },
-    message: { chat: { id: -100 }, message_id: 1, message_thread_id: 12 },
+    message: { chat: { id: -100 }, message_id: 1, message_thread_id: 12, is_topic_message: true },
   };
   return {
     api,
     port,
     query,
+    onLog,
     handler: createGitHubIssueProposalCallbackHandler(
       api as unknown as Api,
       port as GitHubIssueProposalPort,
+      onLog,
     ),
   };
 }
@@ -135,3 +138,80 @@ it("shows a safe integer expiry beyond Date range and a definitely unexecuted te
   expect(text).toContain("尚未发送创建请求");
   expect(text).not.toContain("结果未知");
 });
+
+it.each(["yes", "no", "verify"])(
+  "ignores ordinary reply threads for %s and records bounded callback metadata",
+  async (button) => {
+    const { handler, port, api, query, onLog } = setup();
+    port.decide.mockRejectedValueOnce(new Error("private diagnostic with credential"));
+    await handler({
+      callbackQuery: {
+        ...query,
+        data: `cos:ghi:${proposal.id}:${button}`,
+        message: { ...query.message, is_topic_message: false },
+      },
+    });
+    expect(port.decide).toHaveBeenCalledWith(
+      proposal.id,
+      { userId: 7, chatId: -100, threadId: undefined },
+      expect.any(String),
+    );
+    expect(api.sendMessage).toHaveBeenCalledWith(-100, expect.any(String), {});
+    expect(onLog).toHaveBeenCalledWith({
+      level: "warn",
+      message: "GitHub Issue proposal callback",
+      meta: {
+        proposalId: proposal.id,
+        decision: button === "yes" ? "confirm" : button === "no" ? "cancel" : "verify",
+        outcome: "rejected",
+        userId: 7,
+        chatId: -100,
+        messageId: 1,
+        messageThreadId: 12,
+        threadId: null,
+        isTopicMessage: false,
+      },
+    });
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain("private diagnostic");
+    expect(api.editMessageText).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["throw", "reject"])(
+  "does not lose the result or report failure when logging fails with %s",
+  async (mode) => {
+    const { handler, api, port, query, onLog } = setup();
+    onLog.mockImplementation(() => {
+      if (mode === "throw") throw new Error("logger offline");
+      return Promise.reject(new Error("logger offline"));
+    });
+    await handler({ callbackQuery: query });
+    expect(port.decide).toHaveBeenCalledOnce();
+    expect(api.editMessageText).toHaveBeenCalledOnce();
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "does not wait for a stalled logger before Telegram feedback (rejected=%s)",
+  async (rejected) => {
+    const { handler, api, port, query, onLog } = setup();
+    let releaseLog!: () => void;
+    onLog.mockReturnValue(
+      new Promise<void>((resolve) => {
+        releaseLog = resolve;
+      }),
+    );
+    if (rejected) port.decide.mockRejectedValueOnce(new Error("permission revoked"));
+    const handling = handler({ callbackQuery: query });
+    try {
+      await vi.waitFor(() =>
+        expect(rejected ? api.sendMessage : api.editMessageText).toHaveBeenCalledOnce(),
+      );
+      await expect(handling).resolves.toBe(true);
+    } finally {
+      releaseLog();
+      await handling;
+    }
+  },
+);

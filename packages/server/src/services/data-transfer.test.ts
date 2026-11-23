@@ -71,13 +71,51 @@ function exportPayload(
 }
 
 describe("DataTransferService credential sanitization", () => {
+  it("omits provider and engagement keys on export and on import of older files", async () => {
+    const bot = {
+      id: "old",
+      name: "Fixture",
+      aiConfig: {
+        providers: [{ id: "model", encryptedApiKey: "fixture-ciphertext" }],
+        engagement: { enabled: true, encryptedApiKey: "fixture-ciphertext" },
+      },
+    };
+    const db = {
+      select: () => ({
+        from: (table: unknown) => ({ where: async () => (table === schema.bots ? [bot] : []) }),
+      }),
+    } as unknown as Database;
+    const result = await new DataTransferService(db, "a".repeat(64)).exportBot(bot.id);
+    const expected = { providers: [{ id: "model" }], engagement: { enabled: true } };
+    expect(result.bots[0]?.aiConfig).toEqual(expected);
+    const target = createImportDb();
+    await new DataTransferService(target.db, "a".repeat(64)).importData(exportPayload([bot], {}));
+    expect(target.inserts[0]?.rows[0]?.aiConfig).toEqual(expected);
+  });
+
+  it("rejects retired bot backups before opening a transaction", async () => {
+    const transaction = vi.fn();
+    const service = new DataTransferService({ transaction } as unknown as Database, "a".repeat(64));
+    await expect(
+      service.importData(exportPayload([{ id: "retired", platform: "lark-webhook" }], {})),
+    ).rejects.toThrow("unsupported bot platform");
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it("exports plugin settings without ciphertext and does not copy a secret into ordinary values", async () => {
     const db = {
       select: () => ({
         from: (table: Parameters<typeof getTableName>[0]) => ({
           where: async () =>
             table === schema.bots
-              ? [{ id: "old-bot", name: "Synthetic Bot" }]
+              ? [
+                  {
+                    id: "old-bot",
+                    name: "Synthetic Bot",
+                    larkWebhookConfig: { webhookUrl: "retired-webhook" },
+                    emailForwardConfig: { email: "fixture@example.test" },
+                  },
+                ]
               : table === schema.botPluginConfigs
                 ? [
                     {
@@ -99,6 +137,8 @@ describe("DataTransferService credential sanitization", () => {
     expect(service.getDiscoveredTables()).toContain("bot_plugin_configs");
     expect(service.getDiscoveredTables()).not.toContain("media_transcription_jobs");
     const payload = await service.exportBot("old-bot");
+    expect(payload.bots[0]).not.toHaveProperty("larkWebhookConfig");
+    expect(payload.bots[0]).not.toHaveProperty("emailForwardConfig");
     expect(payload.botPluginConfigs).toEqual([
       expect.objectContaining({
         botId: "old-bot",
@@ -192,7 +232,7 @@ describe("DataTransferService credential sanitization", () => {
                 connectedAt: new Date().toISOString(),
               },
               login: "forged-owner",
-              authorName: "Ai-chan",
+              authorName: "Hanori",
               authorEmail: "ai@example.com",
               repositories: ["private/secret"],
             },

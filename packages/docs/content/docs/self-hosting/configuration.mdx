@@ -20,6 +20,10 @@ description: 按类别说明环境变量、密钥轮换和可选服务的启用�
 
 `BETTER_AUTH_URL` 只填写 origin，不要带末尾 `/` 或 API 路径。更换 `BETTER_AUTH_SECRET` 会使已有认证会话失效。
 
+## 本地 Mini App 域名
+
+在仓库根目录的 `.env` 中设置 `COS_TOOL_BOT_MINI_APP_ORIGIN=https://mini.example.com`，将示例域名替换为指向本机 tunnel 的 HTTPS 域名。运行 `pnpm dev:mini-app` 会沿用该值。需要临时切换域名时，在同一条命令前设置同名环境变量。已有环境升级时填入原域名，可继续沿用 Telegram 中配置的入口。
+
 ## Bot 和加密
 
 | 变量                                        | 用途                                                                |
@@ -41,20 +45,62 @@ Mini App secret 与 Better Auth secret、Bot Token 分开生成；轮换 Mini Ap
 | 变量                         | 用途                                                                                                                                                   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `EMBEDDING_DIMENSIONS`       | embedding 维度，默认 `3072`；变更后需要迁移和重新索引。                                                                                                |
-| `PIXAI_MCP_URL`              | 可选的图片 MCP 完整 HTTPS 地址，例如 `https://mcp.example.com/mcp/pixai`。留空关闭该集成；开发环境允许本机 HTTP。更换地址后需要 owner 重新授权。       |
+| `PIXAI_MCP_URL`              | 旧部署兼容：PixAI MCP 完整地址。首次保存页面中的图片 MCP 平台地址后不再使用。                                                                          |
 | `NSFW_API_URL`               | 图片内容安全服务地址，接口须支持 `POST /classify` 和 multipart `image`。未配置或检测失败时，Bot 保守遮罩照片。Docker 默认使用 `http://nsfw-api:3000`。 |
 | `LOG_RETENTION_DAYS`         | 普通日志保留天数。                                                                                                                                     |
 | `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                                                                                                                     |
 | `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                                                                                                         |
 | `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                                                                                                                     |
-| `OPENAI_IMAGE_MCP_URL`       | GPT 生图 MCP 完整地址，例如 `https://mcp.example.com/mcp/openai-image`。独立于 PixAI 授权，留空关闭。                                                  |
-| `GEMINI_IMAGE_MCP_URL`       | Gemini 生图 MCP 完整地址，例如 `https://mcp.example.com/mcp/gemini-image`。独立授权，留空关闭。                                                        |
+| `OPENAI_IMAGE_MCP_URL`       | 旧部署兼容：GPT 生图 MCP 完整地址。新配置请使用面板中的图片 MCP 平台地址。                                                                             |
+| `GEMINI_IMAGE_MCP_URL`       | 旧部署兼容：Gemini 生图 MCP 完整地址。新配置请使用面板中的图片 MCP 平台地址。                                                                          |
 
 Embedding 维度必须与数据库列一致。已经部署后直接修改它，可能导致迁移和索引不兼容；应先生成并审查迁移，再安排回填。
 
 Embedding 响应会逐批检查数量和维度；带索引的结果按输入索引还原顺序，全部省略索引的兼容服务继续按返回顺序处理。缺项、重复或混合索引、错误维度等无效响应会按生成失败降级，不把不可靠的向量写入记忆或会话。
 
 手动运行历史向量回填脚本时，每个 Bot 的记忆和对话消息分别按本轮开始时的 ID 上界扫描，每条记录最多尝试一次。每批供应商请求设置 5 分钟超时取消；超时按生成失败计入统计，并继续下一批。这个上限不包含数据库操作，也不限制整个脚本的总时长。供应商未返回向量的记录仍保留为空，可在故障排除后人工重跑；新插入的记录留待下一轮。等待结果期间内容已变更、向量已被其他任务填充或记录已删除时，本轮会跳过写入。仅补充记忆向量不会改变编辑版本或最近更新排序。终端分别显示尝试、实际保存、生成失败和并发跳过数量，扫描结束不代表所有向量均已补齐。回填会调用已配置的 Embedding 服务，应按实际供应商计费评估后执行。
+
+## NSFW 图片检测
+
+`NSFW_API_URL` 填检测服务的基础地址，不带 `/classify`。所有生图供应商共用检测流程，正常评分按 `porn + hentai + sexy` 与阈值比较，默认阈值 `0.5`。Telegram 相册会先检测每张照片，任意一张需要遮罩时，整批照片加罩；全部低于阈值时直接显示。调用方明确要求的 spoiler 也会保留。
+
+### 本地运行 Node.js
+
+Docker 运行后，仅启动本地检测服务：
+
+```bash
+docker compose -p cos-bot-dev -f docker-compose.dev.yml up -d nsfw-api
+```
+
+在根目录 `.env` 填写并重启本地服务：
+
+```dotenv
+NSFW_API_URL=http://localhost:43106
+```
+
+如修改了 `NSFW_API_PORT`，地址端口也要同步修改。
+
+### Docker Compose 或 Dokploy
+
+应用容器通过 Compose 服务名访问检测容器：
+
+```dotenv
+NSFW_API_URL=http://nsfw-api:3000
+```
+
+Compose 默认使用此地址；如果从 `.env.example` 复制了本地开发配置，须覆盖其中的 `localhost:43106`。容器里的 `localhost` 指向应用容器本身，不能访问另一个检测容器。Dokploy 中修改应用环境变量后重新部署，Compose 中修改后重新创建应用容器使环境变量生效。
+
+### 排查所有图片都被遮罩
+
+先在应用实际运行的环境中检查该变量与检测服务连通性，不能只看开发机的 `.env`。未配置、请求超时、HTTP 错误或响应无有效评分都会加罩；这不代表图片被判定为 NSFW。
+
+本地可以使用自己的测试图片检查分类接口：
+
+```bash
+curl --fail --max-time 15 -F 'image=@/path/to/test.jpg' http://localhost:43106/classify
+```
+
+应返回包含 `porn`、`sexy`、`hentai`、`neutral`、`drawing` 五个数值的 JSON，每项在 `0` 到 `1` 之间。仅首页可访问不代表分类成功。日志中的 `NSFW classification failed; applying spoiler` 表示检测未成功，生成记录中的 `failed` / `unavailable` 与 `checked` 也应区分查看。
 
 ## 公共音频转录账户
 
@@ -87,7 +133,9 @@ CODING_WORKER_SECRET=生成的独立随机值
 
 ## 生图供应商与默认预设
 
-先在 MCP Platform 的预设页面保存 OpenAI / Gemini API key 并创建预设，再配置上面的对应 MCP 地址。在 Bot 的 **用量与生图治理** 中分别连接 GPT 和 Gemini；三个供应商可以同时连接。
+以 owner 身份在任意 Bot 的 **用量与生图治理 → 图片 MCP 平台** 中填写一个平台域名，例如 `mcp.example.com`，保存后立即为所有 Bot 配置 PixAI、GPT Image 和 Gemini Image 的接口地址，无需新增环境变量或重启。设置持久化到现有数据库；更换平台会清除受影响连接的授权，清空后保存会关闭三个连接。
+
+先在 MCP Platform 保存对应供应商的连接和 API key，再在 Hanori 的连接卡片中分别授权；三个供应商可以同时连接。GPT / Gemini 的预设可选，未填写时使用平台供应商连接的默认配置。完整步骤和旧部署兼容行为见 [图片 MCP](/docs/integrations/mcp#图片-mcp)。
 
 动漫插画默认使用 PixAI，通用图的新配置默认使用 GPT。每个用途都能单独修改默认供应商，并为 PixAI、GPT、Gemini 分别填写默认预设 key 和允许的预设。明确说“用 GPT”或“用 Gemini”只覆盖当前请求，不改动持久默认值；关闭或未连接的供应商不会被自动替代。通用图仍需要启用路由与对应模式。
 

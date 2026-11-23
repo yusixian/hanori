@@ -14,11 +14,13 @@ export interface VideoDownloadActor extends MediaJobActor {
   threadId?: number;
 }
 
+export type VideoDownloadProvider = "bilibili" | "ytdlp";
+
 export interface VideoDownloadView {
   id: string;
   sourceUrl: string;
   title: string;
-  durationSeconds: number;
+  durationSeconds: number | null;
   status: VideoDownloadStatus;
   error: string | null;
   bytes: number | null;
@@ -32,7 +34,7 @@ export interface VideoDownloadPort {
   /** Explicit download requests only. Destination and identity are bound by the host. */
   create(
     actor: VideoDownloadActor,
-    input: { sourceUrl: string },
+    input: { sourceUrl: string; provider?: VideoDownloadProvider },
     signal?: AbortSignal,
   ): Promise<VideoDownloadView>;
   get(actor: VideoDownloadActor, id: string): Promise<VideoDownloadView>;

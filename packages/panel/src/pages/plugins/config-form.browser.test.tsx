@@ -81,13 +81,42 @@ test("allows incomplete drafts and leaves saved secrets untouched when blank", a
   const input = props({ configuration: { values: {}, configuredSecrets: ["cookie"] } });
   render(<PluginConfigForm {...input} />);
   await expect.element(page.getByLabelText("Cookie")).toHaveValue("");
-  await expect.element(page.getByLabelText("Cookie")).toHaveAttribute("type", "password");
+  expect(
+    getComputedStyle(page.getByLabelText("Cookie").element()).getPropertyValue(
+      "-webkit-text-security",
+    ),
+  ).toBe("disc");
   await expect
     .element(page.getByLabelText("Cookie"))
     .toHaveAttribute("autocomplete", "new-password");
   await page.getByRole("button", { name: "Save configuration" }).click();
   expect(input.onSave).toHaveBeenCalledWith({ values: { ratio: 0, enabled: false } });
 });
+
+test.each([1024, 390])(
+  "preserves Netscape cookie lines in masked text secrets at %ipx",
+  async (width) => {
+    await page.viewport(width, 900);
+    const input = props();
+    const cookies =
+      "# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tTRUE\t0\tsession\tsynthetic-value";
+    render(<PluginConfigForm {...input} />);
+    await page.getByLabelText("Cookie").fill(cookies);
+    await expect.element(page.getByLabelText("Cookie")).toHaveValue(cookies);
+    expect(
+      getComputedStyle(page.getByLabelText("Cookie").element()).getPropertyValue(
+        "-webkit-text-security",
+      ),
+    ).toBe("disc");
+    await page.getByRole("button", { name: "Save configuration" }).click();
+    expect(input.onSave).toHaveBeenCalledWith({
+      values: { ratio: 0, enabled: false },
+      secrets: { cookie: cookies },
+    });
+    await expect.element(page.getByLabelText("Cookie")).toHaveValue("");
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  },
+);
 
 test("saves owner-selected numeric limits when the plugin declares no maximum", async () => {
   await page.viewport(390, 844);
@@ -241,7 +270,7 @@ test("a failed save keeps the draft and retry clears new secrets only after succ
     .element(page.getByRole("alert"))
     .toHaveTextContent("Configuration could not be saved. Your changes are kept; try again.");
   await expect.element(page.getByLabelText("Cookie")).toHaveValue("synthetic-private-secret");
-  expect(document.body.textContent).not.toContain("synthetic-private-secret");
+  expect(document.body.innerText).not.toContain("synthetic-private-secret");
   await page.getByRole("button", { name: "Save configuration" }).click();
   await expect.element(page.getByRole("status")).toBeVisible();
   await expect.element(page.getByLabelText("Cookie")).toHaveValue("");

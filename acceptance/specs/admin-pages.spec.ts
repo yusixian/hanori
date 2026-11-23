@@ -73,13 +73,6 @@ const PAGES = [
     severity: "P2",
     expected: ["API test page renders"],
   },
-  {
-    id: "admin-guide-lark",
-    path: "/guides/lark-setup",
-    feature: "Guides",
-    severity: "P2",
-    expected: ["Lark setup guide renders"],
-  },
 ] as const;
 
 test.describe("admin pages", () => {

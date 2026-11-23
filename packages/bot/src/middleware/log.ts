@@ -2,6 +2,7 @@ import type { BotLogEntry } from "@cos-tool-bot/shared";
 import { findTelegramCommandMetadata } from "@cos-tool-bot/shared";
 import type { MiddlewareFn } from "grammy";
 import type { WrapperContext } from "../context.js";
+import { telegramContentKind } from "../utils/message-content.js";
 
 type OnLog = (entry: BotLogEntry) => void | Promise<void>;
 
@@ -44,29 +45,23 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
 
       if (isGroupChat) {
         let type = "Media";
-        let mediaKind = "other";
+        const mediaKind = telegramContentKind(msg);
         let durationSeconds: number | undefined;
 
         if (msg.sticker) {
           type = "Sticker";
-          mediaKind = "sticker";
         } else if (msg.photo) {
           type = "Photo";
-          mediaKind = "photo";
         } else if (msg.video) {
           type = "Video";
-          mediaKind = "video";
           durationSeconds = msg.video.duration;
         } else if (msg.document) {
           type = "Document";
-          mediaKind = "document";
         } else if (msg.voice) {
           type = "Voice";
-          mediaKind = "voice";
           durationSeconds = msg.voice.duration;
         } else if (msg.animation) {
           type = "GIF";
-          mediaKind = "animation";
           durationSeconds = msg.animation.duration;
         }
 
@@ -75,6 +70,8 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
         onLog({ level: "info", message: `${type} from ${username}`, meta });
         return next();
       }
+
+      meta.mediaKind = telegramContentKind(msg);
 
       // Caption commands pass through logging before command guards can reject them.
       const redactCaption = msg.caption_entities?.some((entity) => {

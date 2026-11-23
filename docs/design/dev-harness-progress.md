@@ -21,7 +21,7 @@
 | Bot           | 新建一个工作专用 Bot，不承载群聊配置                                                                                                                                                            |
 | 群            | 新建专用私有话题群，owner 将 Bot 设为管理员；一个项目一个话题                                                                                                                                   |
 | 大需求        | Bot 建议开独立话题讨论（`featureTopics: suggest`）                                                                                                                                              |
-| 试点项目      | koyori（Electron + 文档站）、example-gallery（网站）；cos-tool-bot 自身也接入                                                                                                                    |
+| 试点项目      | koyori（Electron + 文档站）、example-gallery（网站）；cos-tool-bot 自身也接入                                                                                                                   |
 | 执行层        | 首选 Lody CLI：`lody session create --machine …` 在指定机器上建会话（owner 已实测跨机器可行）；自建出站 WSS 节点作备选                                                                          |
 | 编排          | 服务器管关卡（spec 确认、PR 就绪、合并、发版、回滚），lead 会话在关卡之间自由拆任务、派子会话                                                                                                   |
 | 自主程度      | `/bug` 直接开工；普通消息分诊后给按钮；回复卡片即反馈；T0 自动合并默认关闭；大需求先确认 spec                                                                                                   |
@@ -39,7 +39,7 @@
 | 额度显示      | 卡片底部显示上下文与本周额度；`/quota` 按机器与 provider 列出 5 小时、本周、按模型窗口及重置时间；数据来自 `lody machine list --json` 的 `raceLimits` 与 `session show` 的 `contextWindowUsage` |
 | 额度护栏      | 任一窗口达到阈值（默认 5 小时 95%、本周 90%）时暂停该 provider 的排队任务，或按配置降级模型；本周 75% 时提醒                                                                                    |
 | 语音反馈      | v1 不做，使用系统听写输入文字；以后可配置转写服务，默认关闭                                                                                                                                     |
-| 测试沙盒      | 新建私有仓库 `example-owner/harness-sandbox` 用于 H1–H2 测试（owner 已同意，实现 H1 时创建）                                                                                                         |
+| 测试沙盒      | 新建私有仓库 `example-owner/harness-sandbox` 用于 H1–H2 测试（owner 已同意，实现 H1 时创建）                                                                                                    |
 | H3 验收       | 在 koyori 上连续 3 个真实小 bug，除点「合并」外全程无需人工介入                                                                                                                                 |
 | 回滚          | 网站：CI 为每个 commit 构建镜像，按 `sha-*` / `vX.Y.Z` 打 tag，Dokploy 换 tag 部署；回滚后固定（pin），暂停自动部署；Electron 走 revert + 新 patch                                              |
 
@@ -59,7 +59,7 @@
 
 | 部分                                                       | 状态                                                                                                                                                                               |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| release-kit v0.1（R1–R6）及跟进（续跑、PR 号补齐、oxlint） | 已实现，69 个测试通过；已推送到公开仓库 `example-owner/release-kit`；npm 尚未发布                                                                                                       |
+| release-kit v0.1（R1–R6）及跟进（续跑、PR 号补齐、oxlint） | 已实现，69 个测试通过；已推送到公开仓库 `example-owner/release-kit`；npm 尚未发布                                                                                                  |
 | H1 配置与话题                                              | 已合并（PR #110，19c5ff2）并部署；2026-09-25 在生产端到端验证：`/status`、自动建话题                                                                                               |
 | H2 PR 卡片与合并                                           | 已合并并部署；2026-09-25 在生产端到端验证：沙盒 PR #1 出卡片，查看详情后经卡片合并；随后「详情」改为在卡片上就地展开，T2 点「合并」时展开详情并要求确认                            |
 | H3 Lody 执行与小 bug（3.1–3.6）                            | 已合并；2026-09-25 在生产端到端验证：沙盒 `/bug` 建 issue #2，Lody 会话在 MBP 上产出 PR #3，卡片显示 T2、CI 与额度页脚；3.7（koyori 接入）待进行                                   |
@@ -69,7 +69,7 @@
 | 可靠性兜底                                                 | 已实现并有单测：CI 登记窗口、webhook 补偿、会话停下未交付、排队升级（配置见 dev-harness-config.md §10）；尚未在真实 GitHub / Lody 上验证                                           |
 | 话题助手                                                   | 已实现：每个话题独立上下文（表 `harness_topic_messages`，迁移 0057），只读 GitHub 与 harness 工具，建议按钮复用命令处理，`/new` 清空；真实 LLM 与 Telegram 尚未验证                |
 | `/release` 发版                                            | 已实现并有单测：计划卡片、「准备发版」经 `/task` 派发、两步确认后 App 打 annotated tag、调度器跟踪构建；无迁移；未在真实 GitHub 验证                                               |
-| 沙盒仓库                                                   | `example-owner/harness-sandbox`（私有）已推送，CI 全绿                                                                                                                                  |
+| 沙盒仓库                                                   | `example-owner/harness-sandbox`（私有）已推送，CI 全绿                                                                                                                             |
 | 回合结束回调                                               | 已实现并有单测：harness 发起的回合带 `--wait`，bridge 接受即应答、结束后签名回调 `/api/harness/lody/turn`，本地 CLI 进程内处理；空闲即视为结束，轮询保留兜底；尚未用真实 Lody 验证 |
 | `/task`                                                    | 已实现并有单测：不建 issue 的 Lody 任务，按分支关联 PR，否则把最后一条回复作为结果发到话题（`completed`），回复可重开同一会话；真实 Lody 与 Telegram 尚未验证                      |
 | 话题助手命令建议                                           | 已实现：可建议 `/task`、`/list`、`/retry`；提示词改为先找命令，没有专门命令的操作给 `/task` 按钮                                                                                   |
@@ -84,7 +84,7 @@ H3 验收还差：koyori 接入（`.cos/harness.yml` 属于 T3，需 owner 在 G
 | ---------------------------------------------------------------------------- | ------------------------------ |
 | Dokploy `rollbackId` 从哪个接口获取；私有 registry 回滚问题（issue #3861）   | H6 实现时验证                  |
 | koyori stable 前置项：Developer ID 公证、品牌素材授权、Electron 许可文件打包 | H5 前                          |
-| example-gallery 的 GitHub 远端 owner、名称与可见性                            | H6 前                          |
+| example-gallery 的 GitHub 远端 owner、名称与可见性                           | H6 前                          |
 | release-kit 首次发布与 npm Trusted Publishing 配置                           | owner 登录，release-kit 发布前 |
 | `raceLimits` 字段名是否稳定（疑似拼写），升级 Lody 后复核                    | H3 实现时                      |
 
@@ -97,7 +97,7 @@ H3 验收还差：koyori 接入（`.cos/harness.yml` 属于 T3，需 owner 在 G
 | H3   | Lody 执行器、提示词模板、`/bug` 闭环（koyori）                    |
 | H4   | 分诊、建议开话题、spec issue、stack 执行与逐层合并                |
 | H5   | release-kit 接入、preview / stable 卡片、文档检查                 |
-| H6   | Dokploy 部署与回滚，接入 example-gallery                           |
+| H6   | Dokploy 部署与回滚，接入 example-gallery                          |
 | H7   | 自建节点（按需）、Mini App 证据页、每日汇总、T0 自动合并          |
 
 release-kit v0.1 可以与 H1–H2 并行开发。
@@ -109,5 +109,5 @@ release-kit v0.1 可以与 H1–H2 并行开发。
 | 架构与流程       | 本仓库 `docs/design/dev-harness.md`                                                                                                                          | 已合并     |
 | 配置参考         | 本仓库 `docs/design/dev-harness-config.md`                                                                                                                   | 已合并     |
 | 讨论进度         | 本文                                                                                                                                                         | 已合并     |
-| release-kit 设计 | `example-owner/release-kit` 仓库 `docs/design.md`                                                                                                                 | 已推送     |
+| release-kit 设计 | `example-owner/release-kit` 仓库 `docs/design.md`                                                                                                            | 已推送     |
 | 前期调研         | `~/Documents/Programming/agent-workbench/tasks/ai-autonomous-delivery-research/`（`report.md`、`release-and-tg-control.md`、`flows.md`、`topic-harness.md`） | 不纳入 git |

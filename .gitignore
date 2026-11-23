@@ -54,3 +54,8 @@ downloads/
 # Browser test failure artifacts can include private UI data
 __screenshots__/
 .vitest-attachments/
+
+# Local development checkouts, dependency cache and agent indexes
+.worktrees/
+.pnpm-store/
+.codegraph/

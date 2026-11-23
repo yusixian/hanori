@@ -190,21 +190,25 @@ describe("durable GitHub Issue confirmation", () => {
   );
 
   it.each([
-    { ...actor, userId: 8 },
-    { ...actor, chatId: -101 },
-    { ...actor, threadId: 13 },
-  ])("binds the initiating administrator and original chat/topic %j", async (wrong) => {
-    const s = setup();
-    s.current.admins.push(8);
-    const proposal = await s.port.propose(input);
-    await expect(s.port.decide(proposal.id, wrong, "confirm")).rejects.toThrow("发起");
-    await expect(s.port.decide(proposal.id, wrong, "cancel")).rejects.toThrow("发起");
-    expect(await s.port.list(wrong)).toEqual([]);
-    await expect(
-      s.createService().forBot(OTHER_BOT).decide(proposal.id, actor, "confirm"),
-    ).rejects.toThrow();
-    expect(s.fetchMock).not.toHaveBeenCalled();
-  });
+    { wrong: { ...actor, userId: 8 }, message: "Telegram 账号" },
+    { wrong: { ...actor, chatId: -101 }, message: "原聊天" },
+    { wrong: { ...actor, threadId: 13 }, message: "原话题" },
+    { wrong: { ...actor, threadId: undefined }, message: "原话题" },
+  ])(
+    "binds the initiating administrator and original chat/topic %j",
+    async ({ wrong, message }) => {
+      const s = setup();
+      s.current.admins.push(8);
+      const proposal = await s.port.propose(input);
+      await expect(s.port.decide(proposal.id, wrong, "confirm")).rejects.toThrow(message);
+      await expect(s.port.decide(proposal.id, wrong, "cancel")).rejects.toThrow(message);
+      expect(await s.port.list(wrong)).toEqual([]);
+      await expect(
+        s.createService().forBot(OTHER_BOT).decide(proposal.id, actor, "confirm"),
+      ).rejects.toThrow();
+      expect(s.fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("revokes an explicit ID; old and repeated cards cannot run, independent identical intents survive", async () => {
     const s = setup();

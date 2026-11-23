@@ -111,7 +111,7 @@ export function reply(
         enabled: true,
         publicReadEnabled: false,
         codingAgentEnabled: false,
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: ["owner/repo"],
       },

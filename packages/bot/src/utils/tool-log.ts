@@ -1,44 +1,20 @@
-import type { RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
-import type { BotLogEntry } from "@cos-tool-bot/shared";
+import type { RuntimeDiagnosticCode, RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
+import {
+  isDiagnosticCredentialKey,
+  redactDiagnosticText,
+  type BotLogEntry,
+} from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
+import { asSchema } from "ai";
 import { getToolDescriptor } from "../tools/descriptors.js";
 
-const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
 const MAX_STRING_CHARS = 16_384;
 const MAX_SERIALIZED_CHARS = 64_000;
 const MAX_DEPTH = 12;
 
-function isSensitiveKey(key: string): boolean {
-  const normalized = key.replace(/[-_]/g, "").toLowerCase();
-  return (
-    [
-      "authorization",
-      "apikey",
-      "token",
-      "accesstoken",
-      "refreshtoken",
-      "bottoken",
-      "secret",
-      "clientsecret",
-      "password",
-      "cookie",
-      "setcookie",
-      "credential",
-    ].includes(normalized) ||
-    normalized.endsWith("apikey") ||
-    normalized.endsWith("authtoken") ||
-    normalized.endsWith("password") ||
-    normalized.endsWith("secret") ||
-    normalized.endsWith("credential")
-  );
-}
-
 function truncateString(value: string, secrets: readonly string[]): string {
   if (/^data:[^,]+;base64,/i.test(value)) return `[binary data URL: ${value.length} chars]`;
-  let redacted = value.replace(BEARER_VALUE, "Bearer [REDACTED]");
-  for (const secret of secrets) {
-    if (secret.length >= 4) redacted = redacted.split(secret).join("[REDACTED]");
-  }
+  const redacted = redactDiagnosticText(value, secrets);
   return redacted.length > MAX_STRING_CHARS
     ? `${redacted.slice(0, MAX_STRING_CHARS)}… [truncated ${redacted.length - MAX_STRING_CHARS} chars]`
     : redacted;
@@ -51,7 +27,7 @@ function normalizeToolLogValue(
   secrets: readonly string[],
   key?: string,
 ): unknown {
-  if (key && isSensitiveKey(key)) return "[REDACTED]";
+  if (key && isDiagnosticCredentialKey(key)) return "[REDACTED]";
   if (typeof value === "string") return truncateString(value, secrets);
   if (typeof value === "bigint") return `${value}n`;
   if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
@@ -234,6 +210,26 @@ function loggedToolInput(name: string, input: unknown, secrets: readonly string[
   }
 }
 
+function failureCode(value: unknown): RuntimeDiagnosticCode {
+  const code = value && typeof value === "object" && "code" in value ? value.code : undefined;
+  switch (code) {
+    case "invalid_input":
+      return "tool_invalid_input";
+    case "forbidden":
+      return "tool_forbidden";
+    case "not_found":
+      return "tool_not_found";
+    case "storage_error":
+      return "tool_storage_error";
+    case "skill_retry_limit":
+      return "skill_retry_limit";
+    case "repository_resolution_failed":
+      return "repository_resolution_failed";
+    default:
+      return "tool_failed";
+  }
+}
+
 export function wrapToolsWithLogging(
   tools: Record<string, Tool>,
   options: {
@@ -257,8 +253,42 @@ export function wrapToolsWithLogging(
       continue;
     }
     const originalExecute = tool.execute;
+    const schema = asSchema(tool.inputSchema);
     wrapped[name] = {
       ...tool,
+      ...(schema.validate
+        ? {
+            inputSchema: {
+              ...schema,
+              validate: async (input: unknown) => {
+                const result = await schema.validate!(input);
+                if (!result.success) {
+                  // SDK validation happens before execute, so the execution decorator cannot see it.
+                  options.onDiagnostic?.({
+                    stage: "tool",
+                    outcome: "failed",
+                    code: "tool_invalid_input",
+                    toolName: name,
+                  });
+                  await log({
+                    level: "debug",
+                    message: "AI tool input invalid",
+                    meta: {
+                      step: options.getStep?.(),
+                      toolName: name,
+                      input: loggedToolInput(name, input, options.secrets ?? []),
+                      error:
+                        getToolDescriptor(name)?.outputLog === "github_proposal_metadata"
+                          ? { failed: true, privateOutput: true }
+                          : toToolLogValue(result.error, options.secrets),
+                    },
+                  });
+                }
+                return result;
+              },
+            },
+          }
+        : {}),
       execute: async (...args: Parameters<typeof originalExecute>) => {
         const call = ++callSequence;
         const input = args[0];
@@ -306,6 +336,7 @@ export function wrapToolsWithLogging(
           options.onDiagnostic?.({
             stage: "tool",
             outcome: failed ? "failed" : "succeeded",
+            ...(failed ? { code: failureCode(output) } : {}),
             generationId: generation?.id,
             providerOperationId: generation?.providerOperationId,
             deliveryState: generation?.deliveryState,
@@ -332,6 +363,7 @@ export function wrapToolsWithLogging(
           options.onDiagnostic?.({
             stage: "tool",
             outcome: "failed",
+            code: failureCode(error),
             toolName: name,
             toolCallId,
             durationMs: Date.now() - startedAt,

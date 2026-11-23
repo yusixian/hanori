@@ -431,7 +431,6 @@ export const botData = {
     rawMode: "原始渠道事件",
     channel: "渠道",
     telegram: "Telegram",
-    lark: "Lark",
     messageAria: "调试消息",
     messagePlaceholder: "输入一条模拟用户消息…",
     rawEventAria: "原始渠道事件",

@@ -64,6 +64,30 @@ export const TELEGRAM_COMMAND_CATALOG = [
     publicHelpVisibility: "public",
   },
   {
+    command: "q",
+    description: {
+      "zh-CN": "回复消息制作语录贴纸：/q [±1–10] [r] [配色]",
+      en: "Quote a reply: /q [±1–10] [r] [color]",
+    },
+    category: "media",
+    access: "public",
+    executionLane: "operation",
+    capability: "quote.create",
+    publicHelpVisibility: "public",
+  },
+  {
+    command: "qcolor",
+    description: {
+      "zh-CN": "设置聊天语录配色（群内限管理员）",
+      en: "Set quote color (group administrators only)",
+    },
+    category: "media",
+    access: "contextual",
+    executionLane: "config",
+    capability: "quote.color",
+    publicHelpVisibility: "public",
+  },
+  {
     command: "md2tg",
     description: {
       "zh-CN": "将 Markdown 转为 Telegram 富文本",

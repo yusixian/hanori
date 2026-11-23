@@ -55,7 +55,7 @@ export function BotDebuggerPage() {
   const [runs, setRuns] = useState<BotRun[]>([]);
   const [selected, setSelected] = useState<BotRun | null>(null);
   const [mode, setMode] = useState<"message" | "raw">("message");
-  const [channel, setChannel] = useState<"telegram" | "lark-webhook">("telegram");
+  const channel = "telegram";
   const [message, setMessage] = useState("");
   const [rawEvent, setRawEvent] = useState(() =>
     JSON.stringify(
@@ -111,7 +111,6 @@ export function BotDebuggerPage() {
   const channelLabels = useMemo<Record<string, string>>(
     () => ({
       telegram: t("debugger.telegram"),
-      "lark-webhook": t("debugger.lark"),
     }),
     [t],
   );
@@ -427,25 +426,6 @@ export function BotDebuggerPage() {
                   onClick={() => setMode("raw")}
                 >
                   {t("debugger.rawMode")}
-                </Button>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground text-xs font-medium uppercase">
-                  {t("debugger.channel")}
-                </span>
-                <Button
-                  size="sm"
-                  variant={channel === "telegram" ? "default" : "outline"}
-                  onClick={() => setChannel("telegram")}
-                >
-                  {t("debugger.telegram")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant={channel === "lark-webhook" ? "default" : "outline"}
-                  onClick={() => setChannel("lark-webhook")}
-                >
-                  {t("debugger.lark")}
                 </Button>
               </div>
               {mode === "message" ? (

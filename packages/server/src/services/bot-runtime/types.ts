@@ -1,3 +1,6 @@
+import type { QuoteDependencies } from "@cos-tool-bot/bot";
+import type { QuoteSourceStore } from "../quote-source-store.js";
+import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
 import type { MediaTranscriptionPort, PluginRuntimePort } from "@cos-tool-bot/shared";
 import type {
   BotTimerHandlers,
@@ -58,6 +61,9 @@ export interface BotRuntimeInput {
  * instance they were assembled with.
  */
 export interface BotRuntimeServices {
+  quoteRenderer?: QuoteDependencies["renderer"];
+  quoteSourceStore?: QuoteSourceStore;
+  scheduledTasks?: ScheduledTaskPort;
   plugins?: PluginRuntimePort;
   mediaTranscriptionPort?: MediaTranscriptionPort;
   nsfwChecker?: NsfwChecker;

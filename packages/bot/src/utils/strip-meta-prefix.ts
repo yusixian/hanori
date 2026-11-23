@@ -3,8 +3,8 @@
  * mimicking the history format injected into the prompt.
  *
  * Observed leakage patterns:
- *   [From: cos (@example_user)] hello
- *   [From: 星野爱 (@hoshino_ai)] ...
+ *   [From: Alex (@example_user)] hello
+ *   [From: 示例用户 (@example_guest)] ...
  *
  * This is a defensive post-processor — paired with prompt rules, it catches
  * any residual leakage so users never see the template escape into replies.

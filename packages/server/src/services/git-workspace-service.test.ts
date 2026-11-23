@@ -23,7 +23,7 @@ afterEach(async () => {
 describe("Git workspace input validation", { timeout: 30_000 }, () => {
   it("accepts normal repositories and feature branches", () => {
     expect(() => validateRepository("owner/repository.js")).not.toThrow();
-    expect(() => validateGitBranch("feat/ai-chan-fix")).not.toThrow();
+    expect(() => validateGitBranch("feat/hanori-fix")).not.toThrow();
   });
 
   it("rejects traversal repositories and dangerous refs", () => {
@@ -84,7 +84,7 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
     expect(pushSignal).toBe(controller.signal);
   });
 
-  it("keeps Git metadata outside Pi's working tree, commits as Ai-chan, and pushes only explicitly", async () => {
+  it("keeps Git metadata outside Pi's working tree, commits as Hanori, and pushes only explicitly", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-test-"));
     tempDirs.push(root);
     const remote = path.join(root, "remote.git");
@@ -141,8 +141,8 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
       botId: "bot-1",
       repository: "owner/repo",
       token: "github-secret",
-      authorName: "Ai-chan",
-      authorEmail: "ai-chan@example.com",
+      authorName: "Hanori",
+      authorEmail: "hanori@example.com",
       task: "Update README",
       branch: "feat/ai-readme",
       commitMessage: "docs: update README",
@@ -204,8 +204,8 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
       botId: "bot-1",
       repository: "owner/repo",
       token: "github-secret",
-      authorName: "Ai-chan",
-      authorEmail: "ai-chan@example.com",
+      authorName: "Hanori",
+      authorEmail: "hanori@example.com",
       task: "Check README",
       branch: "feat/ai-readme",
       model: {
@@ -233,7 +233,7 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
       "--format=%an|%ae",
       result.commitSha,
     ]);
-    expect(author.stdout.trim()).toBe("Ai-chan|ai-chan@example.com");
+    expect(author.stdout.trim()).toBe("Hanori|hanori@example.com");
 
     const preview = await service.previewPush({
       botId: "bot-1",
@@ -270,8 +270,8 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
         botId: "bot-1",
         repository: "owner/repo",
         token: "github-secret",
-        authorName: "Ai-chan",
-        authorEmail: "ai-chan@example.com",
+        authorName: "Hanori",
+        authorEmail: "hanori@example.com",
         task: "Try another edit",
         branch: "feat/ai-readme",
         model: {
@@ -338,8 +338,8 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
         botId: "bot-1",
         repository: "owner/repo",
         token: "github-secret",
-        authorName: "Ai-chan",
-        authorEmail: "ai-chan@example.com",
+        authorName: "Hanori",
+        authorEmail: "hanori@example.com",
         task: "Update README",
         branch: "feat/cleanup-failure",
         model: {
@@ -451,8 +451,8 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
           botId: "bot-1",
           repository: "owner/repo",
           token: "github-secret",
-          authorName: "Ai-chan",
-          authorEmail: "ai-chan@example.com",
+          authorName: "Hanori",
+          authorEmail: "hanori@example.com",
           task: "Update README",
           branch: "feat/aborted",
           model: {
@@ -551,8 +551,8 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
           botId: "bot-1",
           repository: "owner/repo",
           token: "github-secret",
-          authorName: "Ai-chan",
-          authorEmail: "ai-chan@example.com",
+          authorName: "Hanori",
+          authorEmail: "hanori@example.com",
           task: "Update README",
           branch: "feat/must-not-exist",
           model: {

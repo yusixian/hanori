@@ -29,13 +29,14 @@ const MAX_FILE_CHARS = 100_000;
 const MAX_TREE_ENTRIES = 2_000;
 const CONFIRMATION_BODY_PREVIEW_CHARS = 600;
 const RECOVERY_PATHS_PREVIEW_CHARS = 1_000;
-const RECOVERY_COMMIT_MESSAGE = "chore: recover Ai-chan coding workspace";
+const RECOVERY_COMMIT_MESSAGE = "chore: recover coding workspace";
 
 export interface GitHubToolsOptions {
   config: GitHubToolsRuntimeConfig;
   isAdmin: boolean;
   userId: number;
   chatId: number;
+  /** Actual Telegram topic ID; ordinary reply-chain IDs must not bind confirmation. */
   threadId?: number;
   issueProposals?: GitHubIssueProposalPort;
   api: Api;
@@ -172,7 +173,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
     if (!allowedRepositories.has(repository.toLowerCase())) {
       throw new Error("Repository is not in the administrator-managed GitHub allowlist");
     }
-    if (!authenticatedClient) throw new Error("Ai-chan's GitHub token is not configured");
+    if (!authenticatedClient) throw new Error("The bot's GitHub token is not configured");
     return authenticatedClient;
   }
 
@@ -206,7 +207,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
   const tools: Record<string, Tool> = {
     github_repository: tool({
       description:
-        "读取 GitHub 仓库基本信息。普通成员只能匿名读取公开仓库；管理员仅在白名单仓库可使用助手身份读取私有信息。",
+        "读取 GitHub 仓库基本信息。不要猜 owner/repo；指代不明或查找失败时，先用 github_list_repositories（可用时）和已有记忆/历史定位，仍不明确再询问用户。普通成员只能匿名读取公开仓库；管理员仅在白名单仓库可使用助手身份读取私有信息。",
       inputSchema: zodToAiSchema(z.object({ repository: repositorySchema })),
       execute: async ({ repository }) => {
         try {
@@ -219,6 +220,16 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
             url: repo.html_url,
           };
         } catch (error) {
+          if (error instanceof GitHubApiError && error.status === 404) {
+            return {
+              ...formatError(error),
+              code: "repository_resolution_failed",
+              repository,
+              guidance: options.isAdmin
+                ? "Use github_list_repositories to inspect the configured allowlist, then check available memory/history for the exact repository. Do not guess owner aliases. Ask the user only if the evidence is still ambiguous. A 404 can also mean missing access."
+                : "Check the exact repository in available memory/history or ask the user. A 404 can also mean the repository is private; anonymous access cannot verify it.",
+            };
+          }
           return formatError(error);
         }
       },
@@ -299,6 +310,36 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
   };
 
   if (options.isAdmin) {
+    tools.github_list_repositories = tool({
+      description:
+        "列出当前 Bot 的 GitHub 仓库白名单，仅管理员可用。用户提及仓库、Issue、PR 或‘你自己的仓库’但未给出 owner/repo 时先查此列表，并结合已有记忆/历史定位；不要盲猜 owner。列表只表示已配置，不保证远端访问成功；有歧义再询问用户。",
+      inputSchema: zodToAiSchema(
+        z.object({
+          page: z.number().int().min(1).max(10_000).nullable().optional(),
+          limit: z.number().int().min(1).max(50).nullable().optional(),
+        }),
+      ),
+      execute: async ({ page, limit }) => {
+        const currentPage = page ?? 1;
+        const pageSize = limit ?? 50;
+        const configured = new Map<string, string>();
+        for (const repository of options.config.repositories) {
+          const key = repository.toLowerCase();
+          if (!configured.has(key)) configured.set(key, repository);
+        }
+        const repositories = [...configured.values()];
+        const offset = (currentPage - 1) * pageSize;
+        return {
+          source: "configured_allowlist",
+          repositories: repositories.slice(offset, offset + pageSize),
+          total: repositories.length,
+          page: currentPage,
+          limit: pageSize,
+          hasMore: offset + pageSize < repositories.length,
+          accessVerified: false,
+        };
+      },
+    });
     if (options.config.codingAgentEnabled && options.codeCallbacks && options.codingModel) {
       tools.github_code_task = tool({
         description:

@@ -1,3 +1,9 @@
+import { ModelRecoveryFields } from "./model-recovery-fields";
+import {
+  DEFAULT_MODEL_RECOVERY,
+  type ModelRecoveryConfig,
+  type AiProviderEntryPublic,
+} from "@cos-tool-bot/shared";
 import { EngagementPolicyFields } from "./engagement-policy-fields";
 import { DEFAULT_ENGAGEMENT_POLICY, type EngagementPolicy } from "@cos-tool-bot/shared";
 import { Button } from "@/components/ui/button";
@@ -19,12 +25,16 @@ export function GroupOverrideRow({
   groupKey,
   override,
   engagement,
+  modelRecovery,
+  providers = [],
   onUpdate,
   onRemove,
 }: {
   groupKey: string;
   override: AiGroupOverride;
   engagement?: EngagementPolicy;
+  modelRecovery?: ModelRecoveryConfig;
+  providers?: AiProviderEntryPublic[];
   onUpdate: (updates: Partial<AiGroupOverride>) => void;
   onRemove: () => void;
 }) {
@@ -113,6 +123,34 @@ export function GroupOverrideRow({
               value={{ ...DEFAULT_ENGAGEMENT_POLICY, ...engagement, ...override.engagement }}
               disabled={override.engagement === undefined}
               onChange={(value) => onUpdate({ engagement: value })}
+            />
+          </div>
+          <div className="space-y-3 rounded-lg border bg-white p-3">
+            <p className="text-sm font-medium">{t("recovery.title")}</p>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={override.modelRecovery !== undefined}
+                onCheckedChange={(checked) =>
+                  onUpdate({
+                    modelRecovery:
+                      checked === true
+                        ? structuredClone(modelRecovery ?? DEFAULT_MODEL_RECOVERY)
+                        : undefined,
+                  })
+                }
+              />
+              {t("recovery.override")}
+            </label>
+            <p className="text-muted-foreground text-xs">
+              {t(
+                override.modelRecovery === undefined ? "recovery.inherited" : "recovery.overridden",
+              )}
+            </p>
+            <ModelRecoveryFields
+              value={override.modelRecovery ?? modelRecovery}
+              providers={providers}
+              disabled={override.modelRecovery === undefined}
+              onChange={(value) => onUpdate({ modelRecovery: value })}
             />
           </div>
           <div className="space-y-1.5">

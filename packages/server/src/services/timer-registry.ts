@@ -25,6 +25,8 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 const COMPLETED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const DELIVERY_LEASE_MS = 60_000;
 const DELIVERY_RETRY_MS = 5_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const LONG_TIMER_POLL_MS = 60_000;
 
 export type TimerFireCallback = (
   timerId: string,
@@ -76,11 +78,39 @@ export class TimerRegistry {
   private botLocks = new KeyedAsyncLock();
   private cleanupHandle: ReturnType<typeof setInterval>;
   private dbCleanupHandle: ReturnType<typeof setInterval>;
+  private longTimerHandle: ReturnType<typeof setInterval>;
+  private longTimers = new Map<
+    string,
+    {
+      timer: RegisteredTimer;
+      dueAt: number;
+      onFire: TimerFireCallback;
+      delayed: boolean;
+      retryAllowed: boolean;
+      alreadyClaimed: boolean;
+    }
+  >();
 
   constructor(
     private db: Database,
     private logger: Logger,
   ) {
+    this.longTimerHandle = setInterval(() => {
+      for (const [id, pending] of this.longTimers) {
+        const remaining = pending.dueAt - Date.now();
+        if (remaining > MAX_TIMEOUT_MS) continue;
+        this.longTimers.delete(id);
+        this.scheduleDelivery(
+          pending.onFire,
+          pending.timer,
+          Math.max(0, remaining),
+          pending.delayed,
+          pending.retryAllowed,
+          pending.alreadyClaimed,
+        );
+      }
+    }, LONG_TIMER_POLL_MS);
+    this.longTimerHandle.unref();
     this.cleanupHandle = setInterval(() => this.sweepExpired(), CLEANUP_INTERVAL_MS);
     this.cleanupHandle.unref();
 
@@ -262,6 +292,7 @@ export class TimerRegistry {
       t.status = "cancelled";
       this.active.delete(timerId);
       this.claimedPending.delete(timerId);
+      this.longTimers.delete(timerId);
       return true;
     };
     return t.botId ? this.botLocks.run(t.botId, cancel) : cancel();
@@ -324,6 +355,7 @@ export class TimerRegistry {
       if (timer.handle) clearTimeout(timer.handle);
       this.active.delete(id);
       this.claimedPending.delete(id);
+      this.longTimers.delete(id);
       paused++;
     }
     return paused;
@@ -409,6 +441,20 @@ export class TimerRegistry {
   ): void {
     if (this.closing || this.pausedBots.has(timer.botId!)) return;
     if (alreadyClaimed) this.claimedPending.set(timer.id, timer.botId!);
+    // A single registry sweep checks persisted absolute deadlines until Node can
+    // represent the remaining delay. Never hand an overflowing delay to setTimeout.
+    if (delay > MAX_TIMEOUT_MS) {
+      this.longTimers.set(timer.id, {
+        timer,
+        dueAt: Date.now() + delay,
+        onFire,
+        delayed,
+        retryAllowed,
+        alreadyClaimed,
+      });
+      this.active.set(timer.id, timer);
+      return;
+    }
     const handle = setTimeout(() => {
       if (!this.closing) {
         void this.tasks.track(
@@ -574,6 +620,8 @@ export class TimerRegistry {
     this.registrationHandles.clear();
     clearInterval(this.cleanupHandle);
     clearInterval(this.dbCleanupHandle);
+    clearInterval(this.longTimerHandle);
+    this.longTimers.clear();
     for (const t of this.active.values()) {
       if (t.handle) {
         if (t.isInterval) clearInterval(t.handle);

@@ -20,7 +20,7 @@ Working Agreement below.
 ## Repository Map
 
 pnpm monorepo (Node >= 22.19.0, pnpm 10.5.2, ESM everywhere): multiple Telegram bots, a Hono API,
-a React admin panel + Telegram Mini App, plus optional Lark webhooks, GitHub App, MCP, AI
+a React admin panel + Telegram Mini App, plus optional GitHub App, MCP, AI
 generation, and an isolated Pi coding worker.
 
 ```text
@@ -156,8 +156,4 @@ state limitations instead of claiming success.
 
 ## CI
 
-`.github/workflows/ci.yml` runs all gates on a self-hosted macOS runner labeled `cos-tool-bot`;
-jobs queue indefinitely while it is offline. Before a requested push/PR, check
-`cd ~/actions-runner/cos-tool-bot && ./svc.sh status` (start with `./svc.sh start`). Other runner
-installations on the machine belong to other projects — leave them alone. See
-[readme.md](readme.md) for logs and re-registration.
+Pull requests and pushes to main run the checks in [.github/workflows/ci.yml](.github/workflows/ci.yml) on GitHub-hosted Ubuntu runners.

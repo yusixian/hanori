@@ -1,4 +1,4 @@
-import type { PluginConfigField } from "@cos-tool-bot/shared";
+import type { PluginConfigField, VideoDownloadProvider } from "@cos-tool-bot/shared";
 import type { PluginManager } from "../plugins/manager.js";
 import {
   TELEGRAM_VIDEO_MAX_BYTES,
@@ -74,13 +74,16 @@ function integer(value: unknown, min = 1): value is number {
 export async function loadVideoDownloadConfiguration(
   manager: PluginManager,
   botId: string,
+  provider: VideoDownloadProvider = "bilibili",
 ): Promise<VideoDownloadConfiguration | null> {
-  const state = await manager.runtimeConfiguration("hanori.bilibili", botId);
+  const state = await manager.runtimeConfiguration(
+    provider === "ytdlp" ? "hanori.ytdlp" : "hanori.bilibili",
+    botId,
+  );
   if (!state || state.configuration.downloadEnabled !== true) return null;
   const value = state.configuration;
   if (
-    typeof value.cookie !== "string" ||
-    !value.cookie.trim() ||
+    (provider === "bilibili" && (typeof value.cookie !== "string" || !value.cookie.trim())) ||
     !integer(value.downloadMaxSeconds) ||
     !integer(value.downloadMaxMb) ||
     !integer(value.downloadCacheMinutes) ||
@@ -105,7 +108,9 @@ export async function loadVideoDownloadConfiguration(
   return {
     revision: state.revision,
     installationRevision: state.installationRevision,
-    cookie: value.cookie,
+    ...(provider === "ytdlp"
+      ? { provider, cookies: typeof value.cookies === "string" ? value.cookies : undefined }
+      : { cookie: value.cookie as string }),
     limits: {
       maxDurationSeconds: value.downloadMaxSeconds,
       maxBytes,

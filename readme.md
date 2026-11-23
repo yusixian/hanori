@@ -4,7 +4,7 @@ pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框�
 
 [快速开始](packages/docs/content/docs/getting-started/quickstart.mdx) · [功能指南](packages/docs/content/docs/index.mdx) · [自托管](packages/docs/content/docs/self-hosting/index.mdx) · [更新说明](packages/docs/content/docs/changelog/index.mdx)
 
-开源准备、独立公开仓库同步和改名兼容方案见 [开源准备设计](docs/design/open-source-readiness.md)。`pnpm public:export` 创建不含历史的白名单快照，`pnpm public:check` 检查内容与哈希，`pnpm public:sync` 默认只展示同步计划；公开仓库使用独立的 [README 与 CI 模板](open-source/readme.md)。首次 Docker 配置可通过 `pnpm setup:env` 安全生成，详见[部署指南](packages/docs/content/docs/self-hosting/docker.mdx)。
+首次部署可运行 `pnpm setup:env` 生成独立密钥。部署命令、代理网络和已有实例升级见[部署指南](packages/docs/content/docs/self-hosting/docker.mdx)。贡献代码见[贡献指南](CONTRIBUTING.md)，私下报告安全问题见[安全联系说明](SECURITY.md)。
 
 `pnpm deployment:smoke --check` 只验证部署隔离配置；本机 Docker 启动后运行 `pnpm deployment:smoke`，可用随机项目、临时密钥和空数据库验证首次启动、登录、重建持久性与备份恢复。它不读取已有 `.env`，结束后只清理本次测试资源；前版本升级和真实集成仍需单独验收。
 
@@ -19,7 +19,7 @@ pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框�
 | 自托管、配置与升级 | `/docs/self-hosting`               | [自托管总览](packages/docs/content/docs/self-hosting/index.mdx)       |
 | 历史版本与升级说明 | `/docs/changelog/`                 | [发布说明源文件](docs/releases)                                       |
 
-首版中文指南覆盖 AI 对话与模型、群聊和 JEV、隐私与记忆、图片与贴纸、RSS/总结/提醒、Mini App、管理员私聊代发、MCP、GitHub 编码任务和飞书集成。文档支持搜索、移动端导航和深浅色主题。
+首版中文指南覆盖 AI 对话与模型、群聊和 JEV、隐私与记忆、图片与贴纸、RSS/总结/提醒、Mini App、管理员私聊代发、MCP、GitHub 编码任务。文档支持搜索、移动端导航和深浅色主题。
 
 [Telegram 链接读取配置指南](packages/docs/content/docs/integrations/telegram-reader.mdx)介绍独立 MCP Platform Reader 的账号登录、白名单、OAuth 与验收流程，并说明当前 Bot 接入仍需补齐的能力。
 
@@ -35,7 +35,7 @@ pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框�
 
 管理员通过 AI 查询运行状态、有效配置和上一条消息执行链路的用法及权限边界见[AI 运行诊断](packages/docs/content/docs/reference/runtime-diagnostics.mdx)。
 
-版本详情与 GitHub Release 共用 `docs/releases/v*.md` 正文，避免两份说明长期不一致。公开文档不代表源码仓库已经开源；仓库访问与未来许可证会独立管理。
+版本详情与 GitHub Release 共用 `docs/releases/v*.md` 正文，避免两份说明长期不一致。源码许可见 [MIT License](LICENSE)。
 
 本地只查看文档可运行 `pnpm dev:docs`，打开 `http://localhost:43102/docs/`，无需数据库或 Bot Token。内容维护和构建方式见 [公开文档维护指南](docs/PUBLIC_DOCUMENTATION.md)。
 
@@ -54,8 +54,10 @@ packages/
 ## 开发
 
 ```bash
-pnpm install
-cp .env.example .env  # 填写环境变量
+pnpm install --frozen-lockfile
+cp -n .env.example .env  # 首次开发时填写本地数据库与认证配置
+pnpm dev:db
+pnpm db:migrate
 
 pnpm dev              # 启动 server + panel + docs
 pnpm dev:docs         # 只启动公开文档站，无需数据库或 Bot Token
@@ -65,22 +67,9 @@ pnpm lint             # oxlint 代码检查
 
 首次部署或更新服务器，请阅读 [Docker 部署指南](docs/DEPLOYMENT.md)。管理员通过面板连接 GitHub 前，请阅读 [GitHub App 配置指南](docs/GITHUB_APP.md)。认证迁移、Google OAuth 和完整环境变量说明见 [配置与初始化指南](docs/SETUP.md)。
 
-## CI / Self-hosted Runner
+## CI
 
-CI(`.github/workflows/ci.yml`)运行在维护者的 Mac 上（self-hosted runner，标签 `cos-tool-bot`),**不使用 GitHub 托管的 runner**。runner 不在线时，workflow 会一直排队等待，不会执行。推送代码 / 开 PR 前请确认 runner 服务已启动：
-
-```bash
-cd ~/actions-runner/cos-tool-bot
-
-./svc.sh status   # 查看运行状态
-./svc.sh start    # 启动（安装后重启系统会自动运行）
-./svc.sh stop     # 停止
-```
-
-- runner 目录：`~/actions-runner/cos-tool-bot`（与其他项目的 runner 实例相互独立，一台机器可以同时作为多个项目的 runner)
-- 运行日志：`~/actions-runner/cos-tool-bot/_diag/`
-- 服务通过 launchd 注册（`~/Library/LaunchAgents/actions.runner.example-owner-cos-tool-bot.*.plist`)，安装命令为 `./svc.sh install`
-- 需要重新注册时：在仓库 Settings → Actions → Runners → New self-hosted runner 获取 token 后重新运行 `./config.sh`，再执行 `./svc.sh install && ./svc.sh start`
+推送到主线或向主线提交 PR 会在 GitHub 托管的 Ubuntu 环境运行构建、类型、翻译、单元和浏览器检查。具体命令见 [CI 工作流](.github/workflows/ci.yml)。
 
 ## 环境变量
 
@@ -115,48 +104,17 @@ Dev Harness（预览）用专用 Bot 在 Telegram 话题群里汇报并合并 Gi
 
 ## 部署
 
+首次在本机安装时，在仓库根目录生成 Docker 环境文件，再启动服务：
+
 ```bash
+node scripts/init-env.mjs --email owner@example.com --url http://localhost:43100
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
+curl -fsS http://localhost:43100/api/health/ready
 ```
 
-后续更新可以使用自动备份、拉取、构建和健康检查脚本：
+将示例邮箱换成自己的邮箱。公网部署时使用自己的 HTTPS origin。已有实例继续使用原来的环境文件、加密密钥、Compose 项目名和数据卷。
 
-```bash
-./scripts/update-production.sh
-```
-
-首次部署和脚本使用方法见 [Docker 部署指南](docs/DEPLOYMENT.md)。
-
-### 从旧版本升级（pgvector 迁移）
-
-本项目使用 `pgvector/pgvector:pg17` 镜像（官方 PostgreSQL 17 超集，预装 pgvector 扩展），用于语义搜索功能。若从旧版 `postgres:17-alpine` 升级，数据库大版本相同，volume 数据完全兼容，不会丢失数据。
-
-**生产环境已有容器运行时的升级步骤：**
-
-```bash
-# 1. 拉取新镜像 + 重建应用镜像
-docker compose pull db
-docker compose build app
-
-# 2. 重启容器（db 先启动，app 自动运行迁移）
-docker compose up -d db
-docker compose up -d app
-```
-
-app 启动时会自动执行：
-
-- `CREATE EXTENSION IF NOT EXISTS vector` — 注册 pgvector 扩展
-- Drizzle 迁移 — 添加 vector 列和 HNSW 索引
-
-**（可选）回填存量数据的 embedding：**
-
-在管理面板中配置好 Bot 的 Embedding 设置后，运行回填脚本：
-
-```bash
-docker compose exec app npx tsx packages/server/src/scripts/backfill-embeddings.ts
-```
-
-> 不运行回填脚本也可以正常使用。新消息和记忆会自动生成 embedding，老数据在搜索时走纯关键词匹配。
+更新时运行 `./scripts/update-production.sh`，脚本会备份、构建并检查应用是否就绪。自定义项目名的实例应设置 `DEPLOY_PROJECT_NAME` 为最初使用的名称。Dokploy 的代理设置、备份恢复以及旧版本升级分别见 [Docker 部署](packages/docs/content/docs/self-hosting/docker.mdx) 和 [备份与升级](packages/docs/content/docs/self-hosting/backup-upgrade.mdx)。
 
 ## Claude Code 用户
 

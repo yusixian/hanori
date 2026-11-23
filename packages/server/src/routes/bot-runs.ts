@@ -8,7 +8,7 @@ import type { BotRunService } from "../services/bot-run-service.js";
 const startSchema = z
   .object({
     text: z.string().max(65_536).optional(),
-    channel: z.enum(["telegram", "lark-webhook", "fake"]).optional(),
+    channel: z.enum(["telegram", "fake"]).optional(),
     channelEvent: z.record(z.string(), z.unknown()).optional(),
     replayOf: z.string().uuid().optional(),
   })

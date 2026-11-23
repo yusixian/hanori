@@ -105,25 +105,38 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
 
-for (const { version, theme, pending = false } of [
+for (const { version, theme, status = "" } of [
+  { version: "v0.28.1", theme: "语录父预览与布局" },
+  { version: "v0.29.1", theme: "生图确认修复（未发布候选）", status: "未发布候选" },
+  { version: "v0.29.0", theme: "模型重试与备用模型" },
+  { version: "v0.28.0", theme: "语录贴纸与配色" },
+  { version: "v0.27.1", theme: "Telegram 内容接收补漏" },
+  { version: "v0.27.0", theme: "媒体上下文与局部引用" },
+  { version: "v0.26.1", theme: "自定义总结格式优先级" },
+  { version: "v0.26.0", theme: "范围受限的总结工具与预览" },
+  { version: "v0.22.0", theme: "视频工具与可编辑消息" },
   { version: "v0.18.0", theme: "更新 Lody CLI 与模型列表" },
   { version: "v0.19.0", theme: "自动发现模型与显式配置" },
   { version: "v0.19.1", theme: "授权期间保留 MCP 连接状态" },
-  { version: "v0.20.0", theme: "插件市场、统一检索与 Bot 运行诊断" },
-  { version: "v0.20.1", theme: "运行可靠性与架构维护（待发布）", pending: true },
+  { version: "v0.20.0", theme: "插件市场、统一检索与 Bot 运行诊断", status: "阶段记录" },
+  { version: "v0.20.1", theme: "运行可靠性与架构维护（待发布）", status: "候选记录" },
+  { version: "v0.21.0", theme: "插件、生图与自动化更新" },
+  { version: "v0.21.1", theme: "仓库发现与诊断可靠性（未发布候选）", status: "未发布候选" },
 ]) {
   test(`${version} supports anonymous deep links, navigation and search`, async ({
     page,
   }, info) => {
     await page.goto("/docs/changelog/");
-    const label = pending
-      ? `${version}（待发布）：${theme.replace("（待发布）", "")}`
+    const label = status
+      ? `${version}（${status}）：${theme.replace(/（(?:待发布|未发布候选)）$/, "")}`
       : `${version}：${theme}`;
     await page.getByRole("link", { name: label, exact: true }).click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(version);
     await expect(page.getByText(theme, { exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole("heading", { level: 2, name: /^使用与升级/ })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: /^(使用与升级|升级注意事项)/ }),
+    ).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);

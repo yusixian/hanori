@@ -3,7 +3,7 @@ title: 自托管总览
 description: 了解服务组成、前置条件和从开发到生产的部署边界。
 ---
 
-Hanori 是 pnpm monorepo 应用，由 Telegram/Lark Bot、Hono 服务端、React 管理面板、PostgreSQL 数据库和可选的编码 worker 组成。生产服务会由 Hono 提供 API 和静态面板资源，数据库迁移由应用启动流程负责。
+Hanori 是 pnpm monorepo 应用，由 Telegram Bot、Hono 服务端、React 管理面板、PostgreSQL 数据库和可选的编码 worker 组成。生产服务会由 Hono 提供 API 和静态面板资源，数据库迁移由应用启动流程负责。
 
 项目当前的源代码仓库是私有的。要自托管，先从维护者获得源码或镜像以及对应版本的部署授权；本页不假设任何公开仓库、镜像地址或许可证。
 
@@ -26,7 +26,7 @@ Hanori 是 pnpm monorepo 应用，由 Telegram/Lark Bot、Hono 服务端、React
 - 可持久化的数据库 volume 和备份位置；
 - `BETTER_AUTH_SECRET`、`ENCRYPTION_KEY` 等稳定随机密钥；
 - Telegram Bot Token 和至少一个可用的 AI Provider（如果要使用 AI）；
-- 需要时再配置 Google OAuth、GitHub App、MCP、PixAI、NSFW 服务、Lark 或 coding worker。
+- 需要时再配置 Google OAuth、GitHub App、MCP、PixAI、NSFW 服务 或 coding worker。
 
 ## 部署路径
 

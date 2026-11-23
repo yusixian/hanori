@@ -41,6 +41,47 @@ function createContext(options?: {
 }
 
 describe("AI reply delivery", () => {
+  it("records actual parents for each split and never invents one after reply fallback", async () => {
+    let id = 30;
+    const sendRichMessage = vi.fn(async () => ({
+      ...sentMessage(id++),
+      reply_to_message: sentMessage(5),
+    }));
+    const { ctx } = createContext({ sendRichMessage, sendMessage: sendRichMessage });
+    const delivered = vi.fn();
+    await sendFormattedChunks(
+      ctx,
+      "# " + "a".repeat(5000),
+      { ...DEFAULT_MESSAGE_CONFIG, autoSplitThreshold: 3000, splitDelayMs: 0 },
+      true,
+      undefined,
+      undefined,
+      delivered,
+    );
+    expect(delivered.mock.calls.map(([id, , parent]) => [id, parent])).toEqual([
+      [30, 5],
+      [31, 5],
+    ]);
+    const fallbackContext = createContext({
+      sendRichMessage: vi.fn().mockRejectedValue(new Error("target missing")),
+      sendMessage: vi.fn(async (_chat, _text, options) => {
+        if (options?.reply_parameters) throw new Error("target missing");
+        return sentMessage(21);
+      }),
+    });
+    const fallback = vi.fn();
+    await safeFormattedReply(fallbackContext.ctx, "# fallback", true, undefined, fallback);
+    expect(fallback).toHaveBeenCalledWith(21, undefined);
+  });
+
+  it("retains a waiting message parent when the final text edits it", async () => {
+    const { ctx } = createContext();
+    ctx.waiting_message!.reply_to_message = { ...sentMessage(5), reply_to_message: undefined };
+    const parent = vi.fn();
+    await safeFormattedReply(ctx, "final", false, undefined, parent);
+    expect(parent).toHaveBeenCalledWith(10, 5);
+  });
+
   it("keeps the waiting message until a topic reply is persisted", async () => {
     let ctx!: WrapperContext;
     const sendRichMessage = vi.fn().mockImplementation(async () => {

@@ -109,6 +109,24 @@ describe("TimerRegistry Bot lifecycle", () => {
     vi.useRealTimers();
   });
 
+  it("keeps a sixty-day deadline across recovery without an overflowing timeout", async () => {
+    const due = new Date(NOW.getTime() + 60 * 86_400_000);
+    const future = row("long-future", BOT_A, due);
+    const { db } = database([[future]], [future]);
+    const registry = new TimerRegistry(db, logger());
+    const onFire = vi.fn();
+    await registry.resumeBot(BOT_A, onFire);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onFire).not.toHaveBeenCalled();
+    expect(registry.get("long-future")?.firesAt).toEqual(due);
+    vi.setSystemTime(new Date(due.getTime() - 60_000));
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(onFire).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onFire).toHaveBeenCalledOnce();
+    registry.destroy();
+  });
+
   it("pauses only one Bot's in-memory timers without changing durable active state", async () => {
     const { db, updates, inserts } = database();
     const registry = new TimerRegistry(db, logger());

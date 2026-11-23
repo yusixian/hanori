@@ -69,6 +69,10 @@ Mini App 必须从 Telegram WebView 打开，并携带真实签名 `initData`。
 - 时区、冷却和用量策略符合预期；
 - 日志显示的是读取失败、模型失败、调度失败还是 Telegram 投递失败。
 
+## 发布后仍显示旧版本
+
+GitHub Release 发布不等于运行实例已更新。对照 `/api/health/ready` 的完整 commit SHA 与目标版本；如果持续返回旧 SHA，先查看部署平台上该提交的构建记录。构建失败时旧实例可能仍然健康，不要据此判定新功能上线，也不要连续重复部署。
+
 ## 如何提交一份可用的诊断
 
 提供以下脱敏信息即可：版本与 commit、功能页面或命令、聊天类型、UTC 或本地时间、可复现步骤、短错误类别、健康接口结果。删除用户名、Telegram ID、消息全文、URL 查询密钥、Authorization、Cookie、Bot Token、API Key 和原始媒体。

@@ -1,9 +1,7 @@
-import type { TimeoutConfig } from "@cos-tool-bot/shared";
-import {
-  DEFAULT_TIMEOUT_CONFIG,
-  MAX_FILE_SIZE,
-  resolveTimerMaxSeconds,
-} from "@cos-tool-bot/shared";
+import type { ScheduledTaskPort, ScheduledTaskActor } from "@cos-tool-bot/shared";
+import { sendScheduledTaskConfirmation } from "../handlers/scheduled-task-confirmation.js";
+import type { ConversationCallbacks, TimeoutConfig } from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG, MAX_FILE_SIZE } from "@cos-tool-bot/shared";
 import { resolveAndValidate } from "@cos-tool-bot/shared/file-validation";
 import type { Tool } from "ai";
 import { tool } from "ai";
@@ -13,6 +11,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
+import { editMarkdownMessage } from "../utils/rich-message.js";
 import type { OnceGuardContext } from "./utils.js";
 import { wrapOnce, zodToAiSchema } from "./utils.js";
 
@@ -31,10 +30,21 @@ export interface ReceivedFile {
 }
 
 export interface TelegramToolsOptions {
+  scheduledTasks?: ScheduledTaskPort;
+  scheduledTaskActor?: ScheduledTaskActor;
   api: Api;
   chatId: number;
   userId?: number;
   recentBotMessageIds: number[];
+  conversation?: ConversationCallbacks;
+  richMessageEnabled?: boolean;
+  onTextMessageSent?: (
+    messageId: number,
+    content: string,
+    replyToMessageId?: number,
+    threadId?: number | null,
+  ) => void;
+  onOwnMessageEdited?: (messageId: number, content: string) => void;
   ttsEndpoint?: string;
   pendingActions?: PendingActionRegistry;
   onTimerFired?: (chatId: number, timerId: string, reason: string) => Promise<void>;
@@ -59,7 +69,7 @@ export interface TelegramToolsOptions {
    * Read lazily so callers can fill the list after the tools are built.
    */
   getReplyableMessageIds?: () => readonly number[];
-  /** Longest set_timer duration, in seconds. Falls back to DEFAULT_TIMER_MAX_SECONDS. */
+  /** Legacy stored preference; no longer limits durable task dates. */
   timerMaxSeconds?: number;
 }
 
@@ -95,14 +105,6 @@ function wrapReplyTargetCheck(
 
 const MIN_TIMER_SECONDS = 5;
 
-/** Formats a timer ceiling for the model, in the largest whole unit it divides into. */
-function describeTimerCeiling(seconds: number): string {
-  if (seconds % 86_400 === 0) return `${seconds / 86_400}天`;
-  if (seconds % 3_600 === 0) return `${seconds / 3_600}小时`;
-  if (seconds % 60 === 0) return `${seconds / 60}分钟`;
-  return `${seconds}秒`;
-}
-
 /** Tool names whose execute functions should be guarded against duplicate calls. */
 const ONCE_GUARDED_TELEGRAM_TOOLS = [
   "send_photo",
@@ -120,7 +122,6 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
   // The shared list survives turns; only newly sent messages are visible through this
   // turn's tool results. Older bot IDs must not make guessed reply targets valid.
   const previousBotMessageIds = new Set(recentBotMessageIds);
-  const timerMaxSeconds = resolveTimerMaxSeconds(options.timerMaxSeconds);
 
   const tools: Record<string, Tool> = {
     send_photo: tool({
@@ -303,6 +304,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             reply_markup: keyboard,
           });
           recentBotMessageIds.push(sent.message_id);
+          options.onTextMessageSent?.(sent.message_id, prompt);
           options.pendingActions.registerChoice(
             choiceId,
             chatId,
@@ -350,16 +352,13 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     set_timer: tool({
       description:
-        "设置一个定时器。到期后你（AI）会自动收到通知并可继续对话。可用于投票倒计时、游戏节奏控制、定时提醒等。支持持久化（重启后自动恢复）。",
+        "提出一次性定时任务。配置持久任务服务时发送管理员确认卡，批准后生效；复杂或周期任务使用 propose_scheduled_task。兼容旧服务时到期通知 AI 继续对话。",
       inputSchema: zodToAiSchema(
         z.object({
           seconds: z
             .number()
             .min(MIN_TIMER_SECONDS)
-            .max(timerMaxSeconds)
-            .describe(
-              `定时秒数（${MIN_TIMER_SECONDS}-${timerMaxSeconds}，即最长${describeTimerCeiling(timerMaxSeconds)}）`,
-            ),
+            .describe(`定时秒数，至少 ${MIN_TIMER_SECONDS} 秒；远期计划需要持久化调度`),
           reason: z.string().describe("定时器用途说明，到期后会作为上下文提供给你"),
         }),
       ),
@@ -368,10 +367,30 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
           if (
             !Number.isFinite(seconds) ||
             seconds < MIN_TIMER_SECONDS ||
-            seconds > timerMaxSeconds
+            !Number.isSafeInteger(Math.ceil(seconds * 1000)) ||
+            !Number.isFinite(new Date(Date.now() + seconds * 1000).getTime())
           ) {
-            return { error: `定时秒数必须在 ${MIN_TIMER_SECONDS} 到 ${timerMaxSeconds} 之间` };
+            return { error: "定时秒数必须为有效日期范围内的正数" };
           }
+          if (options.scheduledTasks && options.scheduledTaskActor) {
+            const actor = options.scheduledTaskActor;
+            const task = await options.scheduledTasks.propose(actor, {
+              name: reason.slice(0, 80),
+              instructions: reason,
+              dataScope: { kind: "none" },
+              destination: { chatId, threadId: actor.threadId },
+              schedule: {
+                kind: "once",
+                at: new Date(Date.now() + seconds * 1000).toISOString(),
+                timezone: "UTC",
+              },
+              agent: {},
+            });
+            await sendScheduledTaskConfirmation(api, options.scheduledTasks, actor, task);
+            return { task_id: task.id, status: "awaiting_admin_confirmation" };
+          }
+          if (!options.onTimerCreate && seconds * 1000 > 2_147_483_647)
+            return { error: "远期任务需要持久化调度服务" };
           if (!options.pendingActions || !options.onTimerFired) {
             return { error: "Timer features not available" };
           }
@@ -482,15 +501,45 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
         }),
       ),
       execute: async ({ message_id, text }) => {
-        if (!recentBotMessageIds.includes(message_id)) {
-          return { error: "只能编辑 bot 最近发送的消息" };
-        }
+        const visible =
+          options.getReplyableMessageIds?.().includes(message_id) ||
+          (recentBotMessageIds.includes(message_id) && !previousBotMessageIds.has(message_id));
+        if (!visible) return { error: "只能编辑本轮上下文中可见的 bot 消息" };
+        let persisted = false;
         try {
-          await api.editMessageText(chatId, message_id, text);
-          return { success: true };
+          persisted = (await options.conversation?.findOwnMessage?.(chatId, message_id)) ?? false;
+          if (!persisted && !recentBotMessageIds.includes(message_id)) {
+            return { error: "无法确认消息属于当前 bot 和聊天" };
+          }
+          try {
+            await editMarkdownMessage(
+              api,
+              chatId,
+              message_id,
+              text,
+              options.richMessageEnabled ?? false,
+            );
+          } catch (error) {
+            const e = error as { error_code?: number; description?: string };
+            if (e?.error_code !== 400 || !/message is not modified/i.test(e.description ?? ""))
+              throw error;
+          }
         } catch (err) {
           return { error: String(err) };
         }
+        options.onOwnMessageEdited?.(message_id, text);
+        if (persisted) {
+          try {
+            await options.conversation!.updateOwnMessage!(chatId, message_id, text);
+          } catch (err) {
+            return {
+              success: true,
+              history_synced: false,
+              error: `Telegram 已修改，历史同步失败；可用相同内容重试同步：${String(err)}`,
+            };
+          }
+        }
+        return { success: true, history_synced: true };
       },
     }),
 
@@ -576,6 +625,12 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             reply_parameters: { message_id: reply_to_message_id },
           });
           recentBotMessageIds.push(sent.message_id);
+          options.onTextMessageSent?.(
+            sent.message_id,
+            text,
+            sent.reply_to_message?.message_id,
+            sent.is_topic_message ? (sent.message_thread_id ?? null) : null,
+          );
           return {
             success: true,
             message_id: sent.message_id,

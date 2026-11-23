@@ -7,9 +7,14 @@ import {
   engagementSamples,
   generationCharacters,
   peopleProfiles,
+  settings,
   userPrivacySettings,
 } from "@cos-tool-bot/database";
-import type { EngagementContextMessage, UserPrivacyMode } from "@cos-tool-bot/shared";
+import {
+  UserPrivacyBusyError,
+  type EngagementContextMessage,
+  type UserPrivacyMode,
+} from "@cos-tool-bot/shared";
 import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 
@@ -53,6 +58,7 @@ export class UserPrivacyService {
     botId: string,
     userIds: readonly number[],
     operation: () => Promise<T>,
+    options: { waitIfBusy?: boolean } = {},
   ): Promise<T> {
     const held = this.heldLocks.getStore();
     const missing = [...new Set(userIds)]
@@ -66,9 +72,14 @@ export class UserPrivacyService {
       if (id === undefined) return operation();
       // A free inverse lock can be reserved synchronously. Never wait on an inverse
       // acquisition: another turn could be holding it while waiting on ours.
-      if (owned.some((lease) => id < lease.userId) && this.lock.isLocked(`${botId}:${id}`)) {
+      if (
+        (options.waitIfBusy === false || owned.some((lease) => id < lease.userId)) &&
+        this.lock.isLocked(`${botId}:${id}`)
+      ) {
         return Promise.reject(
-          new Error("This user's library is busy; retry or manage it from the panel"),
+          new UserPrivacyBusyError(
+            "This user's library is busy; retry or manage it from the panel",
+          ),
         );
       }
       return this.runExclusive(botId, id, () => acquire(index + 1));
@@ -137,6 +148,39 @@ export class UserPrivacyService {
     });
   }
 
+  async getQuoteResetAt(botId: string, userId: number): Promise<number | undefined> {
+    const [row] = await this.db
+      .select({ value: settings.value })
+      .from(settings)
+      .where(eq(settings.key, `quote-reset:${botId}:${userId}`))
+      .limit(1);
+    const value = row ? Number(row.value) : undefined;
+    return value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined;
+  }
+
+  private async clearQuoteSources(
+    botId: string,
+    userId: number,
+    db: Pick<Database, "insert" | "update"> = this.db,
+  ): Promise<void> {
+    await db
+      .update(conversationMessages)
+      .set({ meta: sql`(${conversationMessages.meta}::jsonb - 'quoteSource')::json` })
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          sql`${conversationMessages.meta}::jsonb ? 'quoteSource'`,
+          sql`(${conversationMessages.meta}->'quoteSource'->'privacyUserIds')::jsonb @> jsonb_build_array(${userId}::bigint)`,
+        ),
+      );
+    const key = `quote-reset:${botId}:${userId}`,
+      value = String(this.now());
+    await db
+      .insert(settings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } });
+  }
+
   async getMode(botId: string, userId: number): Promise<UserPrivacyMode> {
     const [row] = await this.db
       .select({ mode: userPrivacySettings.mode })
@@ -149,14 +193,22 @@ export class UserPrivacyService {
   }
 
   async setMode(botId: string, userId: number, mode: UserPrivacyMode): Promise<void> {
-    await this.db
-      .insert(userPrivacySettings)
-      .values({ botId, userId, mode })
-      .onConflictDoUpdate({
-        target: [userPrivacySettings.botId, userPrivacySettings.userId],
-        set: { mode, updatedAt: new Date() },
+    const writeMode = async (db: Pick<Database, "insert">) => {
+      await db
+        .insert(userPrivacySettings)
+        .values({ botId, userId, mode })
+        .onConflictDoUpdate({
+          target: [userPrivacySettings.botId, userPrivacySettings.userId],
+          set: { mode, updatedAt: new Date() },
+        });
+    };
+    if (mode === "off") {
+      await this.db.transaction(async (tx) => {
+        await writeMode(tx);
+        await this.clearQuoteSources(botId, userId, tx);
       });
-    if (mode === "off") this.recordContextReset(botId, userId);
+      this.recordContextReset(botId, userId);
+    } else await writeMode(this.db);
   }
 
   async getAvatarPaths(botId: string, userId: number): Promise<string[]> {
@@ -178,6 +230,8 @@ export class UserPrivacyService {
           target: [userPrivacySettings.botId, userPrivacySettings.userId],
           set: { mode: "off", updatedAt: new Date() },
         });
+
+      await this.clearQuoteSources(botId, userId, tx);
 
       const affectedChats = await tx
         .selectDistinct({ chatId: conversationMessages.chatId })
