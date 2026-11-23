@@ -115,7 +115,7 @@ test("shows an initial list failure and only shows empty after a successful retr
   vi.stubGlobal("fetch", fetchMock);
   renderList();
 
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load records");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load records");
   await expect.element(page.getByText("No generations found.")).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Retry" }).click();
   await expect.element(page.getByText("No generations found.")).toBeVisible();
@@ -132,7 +132,7 @@ test("rejects a malformed successful list payload instead of rendering it", asyn
   );
   renderList();
 
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load records");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load records");
   await expect.element(page.getByText("No generations found.")).not.toBeInTheDocument();
 });
 
@@ -195,8 +195,8 @@ test("locks a pending list deletion and verifies an uncertain result before unlo
   } finally {
     deletion.resolve(json({ ok: false, error: "upstream failed" }, 500));
   }
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Could not confirm deletion");
-  expect(document.activeElement?.textContent).toContain("Could not confirm deletion");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't confirm deletion");
+  expect(document.activeElement?.textContent).toContain("Couldn't confirm deletion");
   ((await remove.element()) as HTMLButtonElement).click();
   expect(deleteWrites).toBe(1);
 
@@ -263,9 +263,9 @@ test("does not treat an arbitrary target 404 as proof that deletion succeeded", 
   await expect.element(page.getByText("Prompt task-1", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Delete generation" }).click();
   await page.getByRole("button", { name: "Refresh and check" }).click();
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Could not confirm deletion");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't confirm deletion");
   await expect.element(page.getByRole("button", { name: "Delete generation" })).toBeDisabled();
-  expect(document.activeElement?.textContent).toContain("Could not confirm deletion");
+  expect(document.activeElement?.textContent).toContain("Couldn't confirm deletion");
   expect(deleteWrites).toBe(1);
 });
 
@@ -309,7 +309,7 @@ test("shows a detail load error with retry and rejects a malformed 200", async (
   vi.stubGlobal("fetch", fetchMock);
   renderDetail();
 
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load this generation");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load this generation");
   await expect.element(page.getByText("Generation not found.")).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Retry" }).click();
   await expect.element(page.getByRole("heading", { name: "Task details" })).toBeVisible();
@@ -378,7 +378,7 @@ test("uses the full deletion check when a detail retry follows a failed recovery
   await expect.element(remove).toBeVisible();
   await remove.click();
   await expect
-    .element(page.getByText("Could not confirm deletion.", { exact: false }))
+    .element(page.getByText("Couldn't confirm deletion.", { exact: false }))
     .toBeVisible();
   await page.getByRole("button", { name: "Refresh and check" }).click();
   await expect.element(page.getByText("Refresh failed.", { exact: false })).toBeVisible();
@@ -386,7 +386,7 @@ test("uses the full deletion check when a detail retry follows a failed recovery
 
   await page.getByRole("button", { name: "Retry" }).click();
   await expect
-    .element(page.getByText("Could not confirm deletion.", { exact: false }))
+    .element(page.getByText("Couldn't confirm deletion.", { exact: false }))
     .not.toBeInTheDocument();
   await expect.element(page.getByText("Refresh failed.", { exact: false })).not.toBeInTheDocument();
   await expect.element(remove).toBeEnabled();
@@ -429,8 +429,8 @@ test("locks duplicate detail deletion and exposes active conflicts next to the a
     );
   }
 
-  await expect.element(page.getByRole("alert")).toHaveTextContent("still active");
-  expect(document.activeElement?.textContent).toContain("still active");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("still running");
+  expect(document.activeElement?.textContent).toContain("still running");
   await expect.element(remove).toBeDisabled();
   expect(deleteWrites).toBe(1);
   await page.getByRole("button", { name: "Refresh and check" }).click();
@@ -480,7 +480,7 @@ test("deduplicates the same in-flight deletion after returning through browser h
   } finally {
     deletion.resolve(json({ ok: false, error: "upstream failed" }, 500));
   }
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Could not confirm deletion");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't confirm deletion");
   expect(deleteWrites).toBe(1);
 });
 

@@ -110,7 +110,7 @@ test("focuses the mismatched password and makes the error available to the field
   const confirmation = page.getByLabelText("Confirm new password", { exact: true });
   await confirmation.fill("other-password");
   await page.getByRole("button", { name: "Change password", exact: true }).click();
-  await expect.element(page.getByRole("alert")).toHaveTextContent("The passwords do not match");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Passwords do not match");
   await expect.element(confirmation).toHaveFocus();
   await expect.element(confirmation).toHaveAttribute("aria-invalid", "true");
   expect(confirmation.element().getAttribute("aria-describedby")).toBe("settings-error");
@@ -145,7 +145,7 @@ test("shows a pending password request, prevents repeat submits and clears input
     revokeOtherSessions: true,
   });
   finish!(response({ ok: true }));
-  await expect.element(page.getByRole("status")).toHaveTextContent("Password changed");
+  await expect.element(page.getByRole("status")).toHaveTextContent("Password updated");
   await expect.element(save).not.toBeDisabled();
   await expect.element(page.getByLabelText("New password", { exact: true })).toHaveValue("");
 });
@@ -186,7 +186,7 @@ test("creates an invitation with the chosen role and shows the generated link if
   await page.getByRole("combobox", { name: "Role", exact: true }).click();
   await page.getByRole("option", { name: "Editor", exact: true }).click();
   await page.getByRole("button", { name: "Generate and copy link", exact: true }).click();
-  await expect.element(page.getByRole("status")).toHaveTextContent("Copy the link below manually");
+  await expect.element(page.getByRole("status")).toHaveTextContent("Copy it below");
   await expect
     .element(page.getByRole("status"))
     .toHaveTextContent("https://example.test/accept-invitation?token=preview");

@@ -51,7 +51,7 @@ test("starts disabled, shows the standard Tencent engine, and saves without read
   });
   await page.viewport(1440, 900);
   await expect
-    .element(page.getByText("Account balance is unknown.", { exact: false }))
+    .element(page.getByText("Check your actual balance.", { exact: false }))
     .toBeVisible();
   await page.getByLabelText("Price per minute (CNY)").fill("0.03");
   await page.getByRole("button", { name: "Save ASR settings", exact: true }).click();
@@ -84,7 +84,7 @@ test("requires the administrator to explicitly select Groq free-plan use and kee
   await page.getByRole("option", { name: "Groq · Whisper", exact: true }).click();
   await expect.element(page.getByLabelText("Model / engine")).toHaveValue("whisper-large-v3-turbo");
   const freePlan = page.getByRole("checkbox", {
-    name: /I confirm this key belongs to a Groq Free Plan account/,
+    name: /Confirm this key is on the Groq Free Plan/,
   });
   await expect.element(freePlan).not.toBeChecked();
   await freePlan.click();
@@ -104,7 +104,7 @@ test("keeps unsaved inputs on revision conflict and reloads the current saved ve
   await page.getByRole("button", { name: "Save ASR settings", exact: true }).click();
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("Another administrator changed these settings");
+    .toHaveTextContent("Another admin updated these settings");
   await expect
     .element(page.getByLabelText("SecretKey", { exact: true }))
     .toHaveValue("synthetic-unsaved-key");
@@ -118,7 +118,7 @@ test("offers retry after load failure without rendering credential fields", asyn
   await render(<AsrSettingsPanel />);
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("Transcription settings could not be loaded");
+    .toHaveTextContent("Couldn't load transcription settings.");
   await expect.element(page.getByLabelText("SecretKey", { exact: true })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Reload saved settings", exact: true }).click();
   await expect.element(page.getByLabelText("SecretKey", { exact: true })).toBeVisible();

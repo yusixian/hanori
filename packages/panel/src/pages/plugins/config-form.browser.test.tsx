@@ -268,7 +268,7 @@ test("a failed save keeps the draft and retry clears new secrets only after succ
   await page.getByRole("button", { name: "Save configuration" }).click();
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("Configuration could not be saved. Your changes are kept; try again.");
+    .toHaveTextContent("Couldn't save configuration. Your changes are still here — try again.");
   await expect.element(page.getByLabelText("Cookie")).toHaveValue("synthetic-private-secret");
   expect(document.body.innerText).not.toContain("synthetic-private-secret");
   await page.getByRole("button", { name: "Save configuration" }).click();
@@ -292,9 +292,7 @@ test("rejects incomplete, nonfinite, fractional integer and out-of-bounds numeri
   await page.getByRole("button", { name: "Save configuration" }).click();
   await expect.element(page.getByLabelText("Limit")).toHaveAttribute("aria-invalid", "true");
   const errorId = page.getByLabelText("Limit").element().getAttribute("aria-describedby");
-  expect(document.getElementById(errorId!)?.textContent).toBe(
-    "Enter a valid value for this field.",
-  );
+  expect(document.getElementById(errorId!)?.textContent).toBe("Enter a valid value.");
   await expect.element(page.getByLabelText("Limit")).toHaveFocus();
   expect(input.onSave).not.toHaveBeenCalled();
 });
@@ -427,8 +425,6 @@ test("renders failures and field guidance in Chinese", async () => {
     />,
   );
   await page.getByRole("button", { name: "保存配置" }).click();
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("配置保存失败。已保留修改，请重试。");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("保存失败，修改已保留，请重试。");
   await expect.element(page.getByText("尚未保存密钥。")).toBeVisible();
 });

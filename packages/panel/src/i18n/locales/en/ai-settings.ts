@@ -2,11 +2,12 @@ import { engagementSamples } from "./engagement-samples";
 export const aiSettings = {
   recovery: {
     title: "Retries and fallback",
-    description: "Recover failed chat model requests without changing the primary model.",
+    description:
+      "Retry failed requests or temporarily switch to a fallback without changing your primary model.",
     maxRetries: "Extra retries per turn",
     retryOption: "Retries: {{count}}",
     retryHelp:
-      "All model steps in a chat turn share this retry budget. A configured fallback may be selected once after recoverable failures.",
+      "Shared across all model steps in a reply. Falls back to the backup model at most once on transient errors.",
     useFallback: "Use a fallback model",
     provider: "Fallback provider",
     model: "Fallback model",
@@ -15,11 +16,11 @@ export const aiSettings = {
     modelPlaceholder: "Choose a model",
     providerMissing: "Choose an available provider, or turn off fallback.",
     modelMissing: "Choose a model from this provider’s catalog.",
-    sameModel: "This is the current primary model. It will not be used as a separate fallback.",
+    sameModel: "Matches the primary model, so it won't act as a separate fallback.",
     fallbackHelp: "Add a supported model to the provider’s catalog before selecting it here.",
-    noFallback: "No fallback is configured. Failed requests will not switch to another model.",
+    noFallback: "No fallback set. Failed requests won't switch models.",
     safetyHelp:
-      "Cancellation and permanent configuration errors stop recovery. A step that has started streaming text or tool arguments is not replayed.",
+      "Stops immediately on cancellation or config errors. Steps that have already started streaming won't be replayed.",
     override: "Customize recovery for this chat",
     inherited: "Using global retry and fallback settings.",
     overridden: "These settings replace the global recovery policy for this chat.",
@@ -28,12 +29,11 @@ export const aiSettings = {
   promptVersions: {
     draftOrigin: "Draft loaded from",
     compareSource: "Compare against",
-    workingPreview:
-      "This previews the form and working copy. Inspect enabled versions in Prompt versions.",
+    workingPreview: "Previews the working copy. View active versions in Prompt versions.",
     title: "Prompt versions",
     open: "Manage versions",
     close: "Collapse",
-    help: "Versions contain authored prompts, file contents and Skills. Saving does not enable a version. The settings and files elsewhere remain a working copy; an enabled version supplies new turns without interrupting ongoing turns.",
+    help: "Snapshots your prompts, files, and Skills. Saving doesn't activate a version; enabling one applies to new replies without interrupting active ones.",
     active: "Active",
     working: "Unversioned working copy",
     source: "Version source",
@@ -42,7 +42,7 @@ export const aiSettings = {
     savedTokens: "Saved estimate: private {{private}} · group {{group}} tokens",
     activate: "Enable / restore this version",
     delete: "Delete version",
-    activated: "Enabled for new turns. Ongoing turns keep their captured content.",
+    activated: "Active for new replies. Ongoing replies aren't affected.",
     useWorking: "Switch back to working copy",
     draft: "Draft — not active",
     name: "Version name",
@@ -65,26 +65,25 @@ export const aiSettings = {
     preview: "Compare preview",
     save: "Save as new version (do not enable)",
     previewHelp:
-      "Estimates include dynamic placeholders, not the full model request or every tool schema. Current program-generated tool rules and permissions are used; they are not restored from a version.",
+      "Estimates include dynamic placeholders, not full requests or tool schemas. Tool rules and permissions always use current settings.",
     previewTokens: "Current estimate: private {{private}} · group {{group}} tokens",
     private: "Private-chat preview",
     group: "Group-chat preview",
     diff: "Content differences against comparison source",
     before: "Before",
     after: "Draft",
-    saved: "Version saved. The active version has not changed.",
+    saved: "Version saved. The active version didn't change.",
     maxInjectionBytes: "Injection byte limit",
   },
   taskAgent: {
     title: "Scheduled task Agent defaults",
     description:
-      "Tasks run in independent sessions. Unset fields inherit current defaults at execution time; each approved plan can override them.",
+      "Tasks run in isolated sessions. Blank fields inherit current defaults unless overridden by an approved plan.",
     provider: "Provider",
     model: "Model",
     prompt: "Agent instructions",
     tools: "Allowed tools (comma separated)",
-    toolsHelp:
-      "Blank inherits the default tool list. Enable “No tools” to explicitly disable all tools.",
+    toolsHelp: "Leave blank to use default tools, or check “No tools” to disable them all.",
     noTools: "No tools",
     timeoutMs: "Timeout (milliseconds)",
     maxSteps: "Maximum steps",
@@ -98,7 +97,7 @@ export const aiSettings = {
   engagement: {
     title: "Smart group engagement",
     description:
-      "JEV decides when to join a conversation. Your selected chat model writes the reply. Start in observe mode before enabling replies.",
+      "JEV decides when to chime in; your chat model writes the reply. Try Observe mode first before turning on live replies.",
     mode: "Run mode",
     style: "Conversation style",
     modes: {
@@ -121,16 +120,15 @@ export const aiSettings = {
       off: "Uses existing triggers. No JEV requests are made.",
       shadow: "Records suggestions while keeping existing reply behavior unchanged.",
       active:
-        "Private messages, explicit mentions and replies to the bot enter the reply flow regardless of the old mention/reply switches. Access and privacy rules still apply.",
+        "Private chats, mentions, and replies always get a response regardless of legacy switches. Access and privacy rules still apply.",
     },
     preferences: "Additional preferences",
     preferencesPlaceholder: "For example: anime jokes are welcome; avoid joining arguments.",
-    preferencesHelp:
-      "These preferences guide JEV's reply decision only. They are separate from the reply model's prompt and do not rewrite it.",
+    preferencesHelp: "Guides JEV's decision only—doesn't change your reply model's prompt.",
     preferencesExample: "Preference example",
     preferencesExampleNone: "Choose an example to preview",
     preferencesExampleHelp:
-      "Examples are only previews. Select one, review it, then apply it explicitly to fill or replace the preferences above.",
+      "Pick an example to preview, then apply it to fill or replace the preferences above.",
     preferencesExamplePreview: "Preview: {{name}}",
     preferencesExampleUse: "Use this example",
     preferencesExampleReplace: "Replace existing preferences",
@@ -147,21 +145,21 @@ export const aiSettings = {
     keywordDirect: "Reply directly to trigger words",
     cooldownSeconds: "Proactive reply cooldown (seconds)",
     continuationHelp:
-      "A continuation can bypass proactive cooldown only when its confidence reaches the configured threshold and the window is still open. Set the window to 0 to disable this exemption. Usage and concurrency limits still apply.",
+      "High-confidence follow-ups within this window can bypass proactive cooldown. Set to 0 to disable; usage and concurrency limits still apply.",
     advanced: "Advanced settings",
     replyDecision: "Reply decision",
     replyDecisionHelp:
-      "Confidence is how decisive JEV is, not a reply probability or measured accuracy. This threshold controls whether a selected reply is admitted; it does not control participation routing.",
+      "How certain JEV needs to be before replying (not a probability or accuracy rate). Controls reply admission only.",
     confidenceThreshold: "Reply confidence threshold",
     participationRouting: "Participation routing and cooldown",
     participationRoutingHelp:
-      "These participation thresholds only choose how direct addresses and continuations are routed and whether they can bypass proactive cooldown. They do not decide whether the bot should reply.",
+      "Controls routing and cooldown exemptions for direct addresses and continuations—not whether to reply.",
     addressedConfidenceThreshold: "Direct address confidence threshold",
     continueConfidenceThreshold: "Continuation confidence threshold",
     continuationWindowSeconds: "Continuation window (seconds)",
     requestBudget: "Request budget",
     requestBudgetHelp:
-      "Context messages and the decision timeout bound each JEV request. A smaller context may omit useful history, while a shorter timeout makes fallback more likely.",
+      "Caps context size and timeout per JEV check. Too little context misses backstory; short timeouts trigger more fallbacks.",
     contextMessages: "Context messages",
     timeoutMs: "Decision timeout (ms)",
     reviewRecords: "View decision records",
@@ -170,11 +168,10 @@ export const aiSettings = {
     keyConfigured: "Configured — leave blank to keep",
     keyMissing: "Enter your TypeSafe key",
     keyHelp:
-      "Stored encrypted. Requests use the official endpoint and pinned model jev-1.13.0. Observe mode also incurs classification cost.",
+      "Stored encrypted. Uses the official endpoint (jev-1.13.0). Observe mode also incurs API costs.",
     override: "Customize engagement for this group",
-    overridden:
-      "This group uses the settings below. Turn off customization to restore inheritance.",
-    inherited: "Following the bot defaults. Effective settings are shown below.",
+    overridden: "Using custom settings for this group. Turn off to inherit defaults.",
+    inherited: "Inheriting Bot defaults. Active values are shown below.",
   },
   common: {
     add: "Add",
@@ -255,18 +252,18 @@ export const aiSettings = {
     saveErrorDetail: "Save failed: {{detail}}",
     saveErrorHttp: "Save failed (HTTP {{status}})",
     saveConflict:
-      "The config changed elsewhere. Your draft did not overwrite it; refresh and review before saving again.",
+      "Config was updated elsewhere. Your draft wasn't saved—refresh and review before trying again.",
     saveApplyFailed:
-      "AI config was saved, but the Bot could not apply it. Saved values were reloaded. Check the Bot status, then save again to retry.",
+      "Saved, but couldn't apply to the Bot. Reloaded the saved config—check the Bot status and retry.",
     saveApplyFailedRefreshError:
-      "AI config may have been saved, but the Bot could not apply it and the panel could not reload the latest version. Refresh the page before editing or saving again.",
+      "Config may have saved, but couldn't apply to the Bot or reload. Refresh the page before editing again.",
     saveSuccess: "AI config saved",
     saveError: "Failed to save",
     saveConfigError: "Failed to save AI config",
   },
   selection: {
     title: "Live reply selection",
-    description: "Choose the Provider and model used by new replies across this Bot.",
+    description: "Choose the provider and model for this Bot's new replies.",
     applied: "Live",
     pending: "Saved · waiting for runtime",
     providerAria: "Live reply Provider",
@@ -280,10 +277,9 @@ export const aiSettings = {
     retry: "Retry sync",
     apply: "Apply selection",
     discard: "Discard selection draft",
-    stale: "The selection changed elsewhere. Latest values were loaded; review and apply again.",
+    stale: "Selection changed elsewhere. Latest values are loaded—review and apply again.",
     saveSuccess: "Live Provider and model updated",
-    savedPending:
-      "Saved, but the Bot runtime has not applied it yet. Retry when the Bot is online.",
+    savedPending: "Saved, waiting for the Bot to pick it up. Retry once the Bot is online.",
     saveError: "Failed to update the live Provider and model",
     unavailable: "Save a usable Provider before changing the live selection.",
     retrySuccess: "Runtime selection synchronized",
@@ -425,7 +421,7 @@ export const aiSettings = {
     title: "Models",
     managingTitle: "Models for {{provider}}",
     managingDescription:
-      "Opening this page refreshes all providers and adds new models. Removed models stay excluded. Save to keep catalog changes.",
+      "Refreshes providers on load to pull in new models while keeping removed ones excluded. Save to apply catalog changes.",
     fetch: "Refresh Models",
     refreshing: "Refreshing model lists…",
     fetchDisabled: "Configure a base URL, API key, and model discovery path before refreshing.",
@@ -472,7 +468,7 @@ export const aiSettings = {
     thinkingMode: "Thinking mode",
     thinkingBudget: "Thinking Budget",
     reasoningParamsHint:
-      "Some newer reasoning models reject temperature, a thinking budget, or thinking turned off with HTTP 400. If requests fail that way, set these fields back to default.",
+      "Some reasoning models return HTTP 400 if temperature, thinking budget, or thinking-off is set. Reset these to default if requests fail.",
     capabilities: "Capabilities",
     removeConfirm: "Remove model “{{model}}”?",
     removeAria: "Remove {{model}}",
@@ -508,38 +504,38 @@ export const aiSettings = {
     promptRecommended: "Prompt (Recommended)",
     messages: "Messages",
     historyFormatDescription:
-      "Prompt: pack history into the system prompt for best compatibility. Messages: standard multi-turn format, only for models with native multi-turn support.",
+      "Prompt packs history into the system prompt for best compatibility. Messages uses native multi-turn format.",
     maxContext: "Max Context Messages",
-    maxContextDescription: "Messages sent to LLM (1–100)",
+    maxContextDescription: "Messages sent to the model (1–100)",
     groupHistoryMaxTokens: "Group History Token Budget",
     groupHistoryMaxTokensDescription:
-      "Default 12000, range 2000–64000. Complete raw group history is included when it fits; verify the active model's context size before increasing it.",
+      "Default 12000 (2000–64000). Includes raw group history up to this budget—make sure your model's context window can handle it.",
     retentionDays: "Retention Days",
     retentionDescription: "0 = no age limit; the message-count limit still applies",
     maxRawMessagesPerChat: "Raw Message Limit per Chat",
     maxRawMessagesDescription:
-      "0 = unlimited. A warning appears in Logs at 80%; at the hard limit, oldest records are pruned back to 80% even if summarization is off or fails.",
+      "0 = unlimited. Logs a warning at 80%; at the cap, oldest messages are pruned back to 80% even if summarization is off.",
     groupSettings: "Group Chat Settings",
     groupBufferSize: "Group Buffer Size",
-    groupBufferDescription: "In-memory ring buffer capacity for group messages",
+    groupBufferDescription: "In-memory buffer size for recent group messages",
     includeGroupContext: "Include Group Context",
     allTriggers: "All Triggers",
     randomOnly: "Random Reply Only",
     includeGroupContextDescription:
-      "Only used when group conversation history is disabled; controls temporary injection from the in-memory buffer.",
+      "Used only when group history is off, temporarily injecting recent buffered messages.",
     groupPersistence: "Group Message Persistence",
     groupPersistenceDescription:
-      "When group conversation history is enabled, supported group messages are always saved even if they do not trigger an AI reply.",
+      "When group history is enabled, group messages are always saved even without triggering a reply.",
     saveGroupContext: "Save Group Context",
-    saveGroupContextDescription: "When to persist group context to the database",
+    saveGroupContextDescription: "When to save group context to the database",
     compressionSettings: "Compression Settings",
     autoSummarize: "Auto-summarize with LLM",
-    autoSummarizeOff: "(off = no LLM summaries; age and message-count retention still apply)",
+    autoSummarizeOff: "(off = no LLM summaries; age and message-count limits still apply)",
     compressionProvider: "Compression Provider",
     activeProvider: "Active Provider",
     defaultCompressionProvider: "Follow active Provider ({{provider}})",
     compressionProviderDescription:
-      "Optionally use a dedicated Provider for conversation compression. Otherwise, compression follows the active chat Provider and uses its default model.",
+      "Use a separate provider for summarization, or leave blank to use the active chat provider's default model.",
     summarizeThreshold: "Summarize Threshold",
     summarizeThresholdDescription: "Trigger compression when message count exceeds this",
   },
@@ -547,15 +543,15 @@ export const aiSettings = {
     title: "Reply Mode & Message Splitting",
     richMessage: "Telegram Native Rich Messages",
     richMessageDescription:
-      "When enabled, private streaming replies always use Rich Messages. Other replies use them only for structured formatting such as headings or lists; plain text, bold, and italic use regular messages.",
-    richMessageCommand: "Bot administrators can also change this with /richtext on|off.",
+      "Private streaming replies always use Rich Messages; other replies use them only for headings, lists, or structured formatting.",
+    richMessageCommand: "Bot admins can also toggle this with /richtext on|off.",
     replyMode: "Reply Mode",
     streamOption: "Stream (real-time draft animation)",
     segmentOption: "Segment (multi_message tool, human-like)",
     replyModeDescription:
-      "Stream: text appears character by character using a Telegram draft. Segment: AI splits the reply into 2–5 messages with typing delays via the multi_message tool.",
+      "Stream shows text live as a draft. Segment splits replies into 2–5 messages with typing delays.",
     segmentDescription:
-      "When the AI reply exceeds the threshold, it is split at natural boundaries and sent as multiple messages with typing delays. Set the threshold to 0 to disable.",
+      "Replies longer than this split at natural breaks with typing delays. Set to 0 to disable.",
     autoSplitThreshold: "Auto-Split Threshold",
     autoSplitThresholdDescription:
       "0 = disabled. Recommended: 1500–2500. Max per chunk: 4096 (Telegram limit).",
@@ -565,7 +561,7 @@ export const aiSettings = {
   execution: {
     title: "Execution & queueing",
     description:
-      "Only long-running AI replies and scheduled continuations use these slots. Commands bypass them; tools, sub-agents, and image generation keep their existing limits. Saving restarts a running Bot and cancels its active and queued replies.",
+      "Applies to long-running AI replies and scheduled follow-ups; commands bypass it, and tools keep their own limits. Saving restarts a running Bot and cancels active or queued replies.",
     maxConcurrentReplies: "Concurrent AI replies",
     maxConcurrentRepliesDescription:
       "Maximum replies running across chats for this Bot (1–128; default 32). Replies in the same chat still run one at a time.",
@@ -594,7 +590,7 @@ export const aiSettings = {
     fields: {
       aiReplyMs: {
         label: "AI Reply Timeout",
-        description: "Main AI generateText total timeout.",
+        description: "Total timeout for a single AI reply.",
       },
       perStepMs: {
         label: "Per-Step Timeout",
@@ -636,15 +632,14 @@ export const aiSettings = {
   memorySystem: {
     title: "Memory System",
     enable: "Enable Memory System",
-    description:
-      "When enabled, the AI agent can autonomously manage per-person profiles and search conversation history via tool calls.",
+    description: "Lets the AI maintain people profiles and search chat history automatically.",
     maxSteps: "Max Steps",
     maxStepsDescription: "Maximum model/tool rounds per reply (minimum 1; default 128)",
     toolChoice: "Tool Choice",
     autoRecommended: "Auto (Recommended)",
     required: "Required",
     toolChoiceDescription:
-      "Auto: the LLM decides when to use tools. Required: it must call at least one tool; some newer models reject this setting with HTTP 400, so keep Auto for them.",
+      "Auto lets the model decide. Required forces at least one tool call (some newer models return HTTP 400—keep Auto for those).",
     autoReadProfile: "Auto-read user profile before reply",
     autoUpdateLastSeen: "Auto-update last seen on message",
   },
@@ -652,7 +647,7 @@ export const aiSettings = {
     title: "Bot Memory",
     enable: "Enable Bot Memory",
     description:
-      "Persistent long-term memory for the bot. Stores facts, rules, preferences, and user-specific notes across conversations. The AI can save and recall memories via tool calls.",
+      "Long-term memory for facts, rules, preferences, and user notes across conversations.",
     maxMemories: "Max Memories in Prompt",
     maxMemoriesDescription: "Maximum memories injected into the system prompt (1–100)",
     autoInject: "Auto-inject memories into system prompt",
@@ -661,7 +656,7 @@ export const aiSettings = {
     title: "Embedding (Semantic Search)",
     enable: "Enable Embedding",
     description:
-      "Enables semantic vector search for memories and conversation history. Requires a separate embedding API. When disabled, search falls back to keyword matching.",
+      "Enables semantic search for memories and history using a separate embedding API. Falls back to keyword search when off.",
     baseUrl: "API Base URL",
     apiKey: "API Key",
     keepKeyPlaceholder: "Leave empty to keep the current key",
@@ -705,7 +700,7 @@ export const aiSettings = {
   githubTools: {
     enable: "Enable GitHub tools",
     securityDescription:
-      "Short-lived GitHub App credentials are generated only by the server and are never given to the model or Pi. Only bot administrators can use the authorized identity; other members can at most read public repositories anonymously.",
+      "Short-lived credentials stay on the server—never exposed to the model or Pi. Only bot admins can use the authorized identity; others are limited to anonymous public reads.",
     appConnectionTitle: "GitHub App authorization",
     appConnectionDescription:
       "A panel administrator connects GitHub, then controls the accessible account and repositories on GitHub.",
@@ -748,14 +743,14 @@ export const aiSettings = {
       "Member requests never include the bot's token and cannot create branches, commit, push, or change issues.",
     codingAgent: "Enable Pi coding agent (administrators only)",
     codingAgentDescription:
-      "Pi modifies and tests code in a separate constrained service. The trusted server creates the bot's local commit; Pi never receives the GitHub token, and pushing still requires Telegram confirmation.",
+      "Pi edits and tests code in an isolated worker while the server handles local commits. Pi never sees the GitHub token, and pushes require Telegram confirmation.",
     codingProvider: "Coding provider",
     codingModel: "Coding model",
     followChatProvider: "Follow the current chat provider",
     followChatModel: "Follow the current chat model",
     providerDefaultModel: "Provider default ({{model}})",
     codingModelDescription:
-      "Optionally use a separate provider and model for coding tasks. Leaving the provider unset keeps the existing behavior and follows the model selected for the current chat.",
+      "Optionally pick a separate provider and model for coding tasks, or leave unset to follow the chat model.",
     unavailableProvider: "Unavailable provider ({{id}})",
     unavailableModel: "Unavailable model ({{id}})",
     providerMissingApiKey: "{{provider}} (API key required)",
@@ -767,10 +762,10 @@ export const aiSettings = {
     authorEmail: "Git commit author email",
     repositories: "Bot repository allowlist",
     repositoriesDescription:
-      "One owner/repository per line. This is a narrower boundary inside the GitHub installation: private reads and administrator writes require both GitHub authorization and this allowlist.",
+      "One owner/repo per line. Acts as an inner allowlist inside your GitHub installation—private reads and admin writes require both.",
     installationScopeTitle: "Two repository boundaries",
     installationScope:
-      "The GitHub App installation is the outer limit, and the bot allowlist is the inner limit. Changing the GitHub authorization never expands this bot's allowlist automatically.",
+      "GitHub authorization sets the outer limit; this allowlist sets the inner limit. Expanding GitHub access never widens this list automatically.",
   },
   artworkTools: {
     title: "Artwork Tools",
@@ -809,8 +804,7 @@ export const aiSettings = {
     maxDescriptionLength: "Maximum description length",
     timeout: "Request timeout (milliseconds)",
     maxInputImageSize: "Per-image main-model limit (MB)",
-    maxInputImageSizeDescription:
-      "Oversized images are skipped with an explicit warning log instead of being dropped silently.",
+    maxInputImageSizeDescription: "Oversized images are skipped with a warning in Logs.",
     systemPrompt: "System prompt (optional)",
     viewDefault: "View default",
     defaultPromptHelp: "Leave empty to use the default.",
@@ -881,7 +875,7 @@ export const aiSettings = {
     title: "Unified search",
     enable: "Use unified search",
     description:
-      "Use one search tool for existing sources that this Bot is authorized to access. Turn this off to restore the previous search tools. Source permissions stay the same.",
+      "Uses a single search tool across all authorized sources. Turn off to restore separate search tools; permissions stay the same.",
   },
   webTools: {
     title: "Web Tools",

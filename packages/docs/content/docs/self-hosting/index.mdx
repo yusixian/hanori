@@ -1,45 +1,45 @@
 ---
 title: 自托管总览
-description: 了解服务组成、前置条件和从开发到生产的部署边界。
+description: 了解服务组成、前置条件和从开发到生产的部署路径。
 ---
 
-Hanori 是 pnpm monorepo 应用，由 Telegram Bot、Hono 服务端、React 管理面板、PostgreSQL 数据库和可选的编码 worker 组成。生产服务会由 Hono 提供 API 和静态面板资源，数据库迁移由应用启动流程负责。
+Hanori 是 pnpm monorepo 应用，包含 Telegram Bot、Hono 服务端、React 管理面板、PostgreSQL 数据库和可选的编码 worker。生产环境由 Hono 统一托管 API 和静态面板，应用启动时自动执行数据库迁移。
 
-项目当前的源代码仓库是私有的。要自托管，先从维护者获得源码或镜像以及对应版本的部署授权；本页不假设任何公开仓库、镜像地址或许可证。
+源码仓库目前为私有，自托管前需先向维护者获取源码或镜像及对应版本的部署授权。
 
 ## 组件关系
 
-| 组件            | 责任                                                           |
-| --------------- | -------------------------------------------------------------- |
-| `server`        | 认证、API、BotPool 生命周期、集成和静态资源服务。              |
-| `bot`           | grammY Telegram 运行时、命令、AI 流程和工具。                  |
-| `panel`         | React 管理面板和 Telegram Mini App 前端。                      |
-| `database`      | PostgreSQL 客户端、Drizzle schema 和有序迁移。                 |
-| `shared`        | 共享类型、命令目录、配置契约和工具函数。                       |
-| `coding-worker` | 可选的隔离 Pi 编码任务执行器，不直接持有数据库或 GitHub 凭据。 |
+| 组件            | 职责                                                 |
+| --------------- | ---------------------------------------------------- |
+| `server`        | 认证、API、BotPool 生命周期、外部集成和静态资源服务  |
+| `bot`           | grammY Telegram 运行时、命令、AI 流程和工具          |
+| `panel`         | React 管理面板与 Telegram Mini App 前端              |
+| `database`      | PostgreSQL 客户端、Drizzle schema 与有序迁移         |
+| `shared`        | 共享类型、命令目录、配置契约与工具函数               |
+| `coding-worker` | 可选的隔离 Pi 编码执行器，不持有数据库或 GitHub 凭据 |
 
 ## 前置条件
 
-开发环境通常需要 Node.js `22.19.0` 或更高版本、pnpm `10.5.2`、PostgreSQL 17（生产镜像使用 pgvector）和 Docker Compose。生产还需要：
+开发环境需要 Node.js `22.19.0+`、pnpm `10.5.2`、PostgreSQL 17（生产镜像带 pgvector）和 Docker Compose。生产环境额外需要：
 
-- 一个稳定的 HTTPS 公开 origin；
-- 可持久化的数据库 volume 和备份位置；
-- `BETTER_AUTH_SECRET`、`ENCRYPTION_KEY` 等稳定随机密钥；
-- Telegram Bot Token 和至少一个可用的 AI Provider（如果要使用 AI）；
-- 需要时再配置 Google OAuth、GitHub App、MCP、PixAI、NSFW 服务 或 coding worker。
+- 稳定的 HTTPS 公开 origin；
+- 持久化数据库 volume 和备份目录；
+- `BETTER_AUTH_SECRET`、`ENCRYPTION_KEY` 等独立随机密钥；
+- Telegram Bot Token 与至少一个可用 AI Provider（启用 AI 时）；
+- 按需准备 Google OAuth、GitHub App、MCP、PixAI、NSFW 检测服务或 coding worker。
 
 ## 部署路径
 
-- 本地开发：先启动开发数据库，再配置环境变量，使用 `pnpm dev` 运行 server 和 panel。
-- Compose 生产：准备 `.env`，构建 app 和数据库服务，等待迁移与健康检查通过。
-- 外部编排：将 Compose 项目接入既有的容器平台，保留健康检查、持久化卷和备份门槛。
+- **本地开发**：启动开发数据库、配好 `.env`，运行 `pnpm dev` 同时起 server 和 panel。
+- **Compose 生产**：准备 `.env`，构建启动 app 与数据库，等待迁移和健康检查通过。
+- **容器平台编排**：将 Compose 接入现有平台（如 Dokploy），保留健康检查、持久化卷与备份依赖。
 
-不要把开发数据库、真实 Bot Token 或生产 `.env` 提供给浏览器测试和验收脚本。Mini App 也必须通过 Telegram WebView 的真实签名数据验证。
+切勿把开发库、真实 Bot Token 或生产 `.env` 交给浏览器测试和验收脚本；Mini App 权限流程需在真实 Telegram WebView 中验证。
 
 ## 推荐顺序
 
-1. 阅读[配置说明](/docs/self-hosting/configuration)，生成并保存密钥。
-2. 阅读[Docker 部署](/docs/self-hosting/docker)，启动最小的 server、panel 和数据库。
-3. 通过 `/api/health` 与 `/api/health/ready` 检查服务，再登录面板。
-4. 配置 Bot、Provider 和备份，最后启用可选集成。
-5. 维护时按[备份与升级](/docs/self-hosting/backup-upgrade)执行，并记录实际验证范围。
+1. 按[配置说明](/docs/self-hosting/configuration)生成并保存密钥。
+2. 按[Docker 部署](/docs/self-hosting/docker)启动最小服务（server、panel 与数据库）。
+3. 检查 `/api/health` 与 `/api/health/ready`，通过后再登录面板。
+4. 添加 Bot、Provider 和备份策略，最后启用可选集成。
+5. 后续升级与迁移按[备份与升级](/docs/self-hosting/backup-upgrade)执行。

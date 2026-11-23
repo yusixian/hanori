@@ -143,7 +143,7 @@ test("pages beyond 100 bots, corrects a shrunken last page, and keeps mobile car
   expect(mocks.useList.mock.calls.at(-1)?.[0].pagination).toEqual({ current: 1, pageSize: 12 });
 
   await page.getByRole("button", { name: "1 / 11" }).click();
-  const pageInput = page.getByRole("textbox", { name: "Click to jump to a page" });
+  const pageInput = page.getByRole("textbox", { name: "Jump to page" });
   await pageInput.fill("11");
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("link", { name: /Bot 121/ })).toBeVisible();

@@ -1,9 +1,9 @@
 ---
 title: 插件开发契约
-description: 发布预构建 ESM 插件，定义每轮工具和只读检索来源，并验证配置、取消与权限边界。
+description: 发布预构建 ESM 插件，定义每轮工具和只读检索来源，并满足配置、取消与权限边界。
 ---
 
-API v1 插件由清单与预构建 ESM 入口组成。宿主在服务端导入入口，为每次 AI 回复创建独立会话。SDK 定义接入方式，不提供进程隔离或沙箱。
+API v1 插件由清单文件和预构建 ESM 入口组成。宿主在服务端导入入口，每次 AI 回复创建独立会话。SDK 只定义接入契约，**不提供进程隔离或代码沙箱**。
 
 ## 发布文件
 
@@ -14,9 +14,9 @@ hanori.plugin.json
 index.mjs
 ```
 
-入口必须能够直接在 Hanori 的 Node.js 22.19.0 或更高环境运行。把依赖预先打包进发布文件，或使用 Node.js 内置模块；不要依赖宿主私有包、开发机器的 `node_modules` 或安装后构建。安装器不执行依赖安装、构建脚本、Git hooks 或子模块更新，不接受符号链接与子模块。发布树最多 512 个条目、32 MiB，清单最多 64 KiB。
-
-安装源使用公开 `https://github.com/owner/repository` 和完整 40 位小写提交 SHA。宿主核对实际取回的提交，并保留不可变版本。更新必须维持同一插件 ID；`hanori.bilibili` 与 `hanori.netease` 保留给内置插件。
+- 入口须直接在 Node.js 22.19.0+ 运行：第三方依赖需预先打包，或只用 Node.js 内置模块，不能依赖宿主私有包、本地 `node_modules` 或安装后构建。
+- 安装器不跑依赖安装、构建脚本、Git hooks 或子模块更新，拒绝符号链接与子模块。发布树上限 512 个条目、32 MiB，清单上限 64 KiB。
+- 安装源为公开 `https://github.com/owner/repository` 加完整 40 位小写提交 SHA。宿主校验实际拉取的提交并固化版本；更新须保持同一插件 ID。`hanori.bilibili` 与 `hanori.netease` 保留给内置插件。
 
 ## 清单与配置
 
@@ -34,11 +34,10 @@ index.mjs
 }
 ```
 
-插件 ID 使用小写字母、数字及点或连字符分段，最多 100 字符；版本为语义化版本字符串。配置支持 `string`、`text`、`number`、`integer`、`boolean`、`select`，可声明必填、默认值和边界，`select` 提供值与标签。
-
-秘密字段使用 `string` 或 `text` 并声明 `secret: true`，不能带默认秘密。每个 Bot 的配置独立保存；公开 API 只返回普通值和已配置秘密的字段名。更新时，普通值写入 `configuration.values`，秘密写入 `configuration.secrets`：秘密字段省略或空字符串保留旧值，`null` 明确清除。
-
-保存与启用请求带 `expectedRevision` 和当前 `manifestHash`。清单改变会阻止未审核配置执行，作者不能通过保持版本号不变来避开清单审核。更新、回滚、卸载和重新安装都会使旧修订失效；卸载保留制品及配置草稿，但会停用所有关联 Bot。
+- 插件 ID 仅含小写字母、数字、`.` 或 `-` 分段，最多 100 字符；版本为语义化版本。
+- 配置字段支持 `string`、`text`、`number`、`integer`、`boolean`、`select`（含值与标签），可声明必填、默认值和范围。
+- 秘密字段用 `string` 或 `text` 加 `secret: true`，不能设默认值。各 Bot 配置独立，公开 API 仅返回普通值和已配置的秘密字段名。更新时普通值写入 `configuration.values`，秘密写入 `configuration.secrets`：省略或空串保留旧值，`null` 清除。
+- 保存与启用请求须携带 `expectedRevision` 和当前 `manifestHash`。清单变更会拦截未审核配置（保持版本号不变无法绕过）。更新、回滚、卸载和重装都会令旧修订失效；卸载保留制品与配置草稿，但会停用所有关联 Bot。
 
 ## 入口与会话
 
@@ -55,25 +54,23 @@ export default {
 };
 ```
 
-`createSession` 可以返回 Promise。`context` 提供：
+`createSession` 可返回 Promise。`context` 包含：
 
 | 字段            | 含义                                                                                             |
 | --------------- | ------------------------------------------------------------------------------------------------ |
 | `actor`         | 当前 `botId`、`chatId`、可选 `userId` 和 Telegram `threadId`、`isAdmin`、`isPrivate`、`readOnly` |
-| `configuration` | 当前 Bot 已保存、已启用且经过清单审核的配置；秘密只在服务端出现                                  |
-| `signal`        | 会话关闭、配置变化、插件停止或宿主关闭时取消                                                     |
+| `configuration` | 当前 Bot 已保存、已启用且通过清单审核的配置（秘密仅在服务端可见）                                |
+| `signal`        | 会话关闭、配置变更、插件停止或宿主关停时触发取消                                                 |
 
-引用、缓存和正在执行的任务放在会话内，不要用模块级状态共享 Bot 数据。工具的 `execute` 和检索的 `search` 各接收操作信号，网络请求应同时响应会话与操作取消；取消后不接纳迟到结果。`dispose` 释放资源并停止任务，可以返回 Promise。保持顶层导入轻量，不在导入时启动网络、定时器或任务。
-
-内置 Bilibili 的持久转录与视频下载由宿主服务管理，属于显式创建的后台任务：创建信号只控制验证和接纳，当前聊天轮次的 `dispose` 不终止已经接纳的任务；配置修订、身份授权、资源配额和取消由宿主继续核对。第三方会话不能借此绕过上述生命周期规则或自行保留跨 Bot 凭据。
-
-宿主限制入口加载、会话创建和调用的等待时间，并在调用前后重新检查安装及 Bot 配置。超时只限制宿主等待，不能强制终止忽略取消的 JavaScript 或进程；作者必须实现取消和资源释放。
-
-可选 `check(context)` 返回 `{ success: boolean }`，用于有意义的已保存配置检查。没有该钩子时，面板只创建、校验并销毁会话。不要把这个默认测试当作真实服务连通性或账号认证证明。
+- 状态、缓存和在途任务放进会话实例，禁止用模块级状态跨 Bot 共享数据；顶层导入保持轻量，勿在导入时发网络请求或启定时器。
+- 工具 `execute` 和检索 `search` 均接收操作级 `signal`，网络请求须同时监听会话与操作信号，取消后丢弃迟到结果；`dispose` 负责释放资源和停任务（可返回 Promise）。
+- 宿主限制入口加载、会话创建与调用的等待时间，并在调用前后重检安装及 Bot 配置。超时仅停止宿主等待，无法强杀忽略取消的 JS 代码，插件须自行响应取消并清理资源。
+- 内置 Bilibili 的持久转录与视频下载由宿主托管后台任务：当前轮次的 `dispose` 不会终止已接纳任务，但修订、授权、配额和取消仍由宿主核对。第三方插件不能借此绕过会话生命周期或跨 Bot 留存凭据。
+- 可选钩子 `check(context)` 返回 `{ success: boolean }` 用于检测已保存配置；未实现时面板仅验证会话创建与销毁，不代表外部服务连通或账号有效。
 
 ## 可选扫码登录
 
-清单声明 `"login": { "type": "qr" }` 后，面板提供统一扫码登录界面。入口同时实现 `startLogin(signal)`，返回私有登录会话：
+清单声明 `"login": { "type": "qr" }` 且入口实现 `startLogin(signal)` 时，面板自动提供扫码登录界面：
 
 ```ts
 interface LoginAttempt {
@@ -90,42 +87,38 @@ interface LoginAttempt {
 }
 ```
 
-`qrUrl` 是平台提供的 HTTP(S) 扫码内容，面板本地生成二维码，不通过外部图片服务。`startLogin` 的信号覆盖会话生命周期，`poll` 还须响应单次操作信号。每个尝试使用独立 Cookie jar；创建与轮询不得自行写 Bot 配置。插件应限制登录请求的目标、跳转、大小和超时，不能把私有平台响应或原始异常返回给页面。
-
-返回 `authorized` 前必须调用平台账号接口验证登录，不能仅凭“已扫码”或某个成功状态码判断。`secrets` 仅包含清单中已声明的秘密字段，值为非空字符串；账号名用于显示，应为有界纯文本。秘密仅在服务端返回宿主，宿主核对安装版本、清单和 Bot 配置修订后合并并加密保存。公开状态只有保存成功后才变成 `connected`。
-
-宿主绑定当前管理员网页会话、插件和 Bot，限制并发并串行轮询，最短轮询间隔为 2 秒，扫码会话最多 5 分钟。持久化开始前，关闭、过期、配置改变或插件停止会取消尝试；进入 `saving` 后不再承诺取消写入，确认结果后才报告 `connected`，结果不确定时报告 `save_unknown` 并提示重新加载配置。`dispose` 应销毁 Cookie jar、停止定时器并释放资源。插件不应在模块级缓存凭据。登录不会自动启用插件；现有配置待审核时，需先审核保存再开始登录。
-
-可在不修改面板的情况下实现第三方扫码登录。该扩展仍属于可信服务端插件能力，不提供远程浏览器、密码表单或插件代码沙箱。TypeScript 契约见 `packages/shared/src/plugin-login.ts`。
+- `qrUrl` 为 HTTP(S) 扫码内容，由面板本地生成二维码。`startLogin` 信号覆盖登录会话，`poll` 同时响应单次操作信号。每次尝试须使用独立 Cookie jar，不得自行写 Bot 配置，并限制目标主机、跳转、体积与超时，勿将私有响应或原始异常透传给前端。
+- 返回 `authorized` 前必须调平台接口确认登录状态，不能只凭「已扫码」判定。`secrets` 仅含清单声明的秘密字段（非空字符串），`account.name` 为有界纯文本。秘密在服务端经宿主校验版本、清单和修订后加密保存，保存成功才将公开状态切为 `connected`。
+- 宿主按管理员网页会话、插件和 Bot 串行限流轮询（最短间隔 2 秒，总限时 5 分钟）。进入 `saving` 前关闭、过期、改配置或停插件都会取消尝试；进入 `saving` 后不再保证取消，结果不确定时返回 `save_unknown` 并提示重载。`dispose` 须销毁 Cookie jar 和定时器，勿在模块级缓存凭据。
+- 登录不自动启用插件；配置待审核时须先审核保存再登录。该能力仍属可信服务端插件，不提供远程浏览器、密码表单或沙箱。TypeScript 契约见 `packages/shared/src/plugin-login.ts`。
 
 ## 工具
 
-每个工具声明 `name`、`description`、JSON 对象 `inputSchema`、`effect`、`access`，实现 `execute(input, signal)`。本地名称匹配 `[a-z][a-z0-9_]{0,39}`，同一会话不能重复；宿主会加命名空间，不要在插件内猜测最终工具名。
+每个工具声明 `name`、`description`、JSON 对象 `inputSchema`、`effect`、`access`，并实现 `execute(input, signal)`。
 
-`effect` 为 `read_only` 或 `mutating`，`access` 为 `all` 或 `admin`。宿主按身份筛选管理员工具，只读上下文排除修改工具。声明不是代码沙箱：作者仍负责实际行为、租户隔离、服务器授权和副作用确认。
+- 本地名称须匹配 `[a-z][a-z0-9_]{0,39}`，同会话不重复；宿主自动加命名空间，勿在插件内猜测最终名称。
+- `effect` 为 `read_only` 或 `mutating`，`access` 为 `all` 或 `admin`。宿主按身份过滤管理员工具，只读上下文排除修改工具。声明不替代代码内的租户隔离、权限校验与副作用确认。
+- 硬性上限：最多 32 个工具、单 Schema 16,384 字符、入参 JSON 32,000 字符、出参 JSON 64,000 字符，出参须可 JSON 序列化。模型入参不可信，`execute` 内仍须校验类型、长度、枚举、未知字段与资源归属。
+- 勿在结果或日志中输出秘密、认证头、签名私有 URL 或原始异常。读取外部内容时限制主机、协议、重定向、大小、超时和正文长度并分页返回；外部文本只作资料，不能当成指令或授权。
 
-工具最多 32 个，JSON Schema 最多 16,384 字符，工具参数 JSON 最多 32,000 字符，结果 JSON 最多 64,000 字符。结果必须可以 JSON 序列化。模型生成的参数是不可信输入；`inputSchema` 不代替执行时校验，作者需要验证类型、长度、枚举、未知字段和引用归属。
+内置 Bilibili 可选注入宿主 `VideoDownloadPort`（`download_video` / `cancel_video_download` 为 `mutating/admin`，`get_video_download` 为 `read_only/admin`）：
 
-不要把秘密、认证头、带签名的私有 URL 或原始异常放进结果或日志。需要读取外部资料时，限制主机、协议、重定向、大小、超时和正文长度，按页返回并保留来源。外部正文仅作资料，不能变成执行指令或用户授权。
-
-内置 Bilibili 可选择注入宿主 `VideoDownloadPort`：`download_video` 为 `mutating/admin`，`get_video_download` 为 `read_only/admin`，`cancel_video_download` 为 `mutating/admin`。下载只接受 `sourceUrl`，查询和取消只接受任务 ID；宿主绑定 Bot、聊天、用户和话题，不能从模型参数接收发送目标、文件路径或 Cookie。只有管理员明确要求下载并发回时才创建，不在元数据检索、字幕缺失或 ASR 完成后隐式触发。
-
-该功能下载 Bilibili DASH 音视频流，在隔离 ffmpeg 中 stream copy 合并 MP4，再流式上传到 Telegram；没有使用 yt-dlp 本体，也不自动 ASR。服务端按保存的时长、大小、每日次数、缓存 TTL、缓存预算和磁盘余量限制工作；Telegram 的 50 MB 上传容量独立有效。数字配置可不声明 `max`，但宿主仍校验安全整数、单位转换和时间戳范围，缓存预算须覆盖有效单视频大小上限的两倍加 1 MiB，供输入、合并输出和容器开销使用。返回状态须如实保留 `sending` 或 `delivery_unknown`：取消不撤回已发消息，未知投递结果不自动重发；缓存过期仅删除服务器副本。
+- 下载只收 `sourceUrl`，查询和取消只收任务 ID；发送目标、路径和 Cookie 由宿主按当前 Bot/聊天/用户/话题绑定，不接受模型传参。仅管理员明确要求下载回传时创建，不在检索、缺字幕或 ASR 后隐式触发。
+- 拉取 Bilibili DASH 音视频流后在隔离 ffmpeg 中 stream copy 合并 MP4 并流式上传 Telegram（不用 yt-dlp 本体，不自动 ASR）。受时长、体积、日次、缓存 TTL、缓存预算和磁盘余量限制，且受 Telegram 50 MB 上限约束。数字配置未设 `max` 时宿主仍校验安全整数与范围；缓存预算须至少覆盖单视频上限的 2 倍加 1 MiB。
+- 返回状态如实保留 `sending` / `delivery_unknown`：取消不撤回已发消息，未知投递不自动重发，缓存过期仅删服务器副本。
 
 ## 检索来源
 
-`searchProviders` 最多 16 个，每项声明本地 `id`、`scope`、`description`、`pagination`，实现 `search(request, signal)`。`id` 与 `scope` 使用工具相同的本地名称规则。来源名称会加插件命名空间，`scope` 保持声明值；描述应说明是关键词检索、列表浏览还是链接查询。
+`searchProviders` 最多 16 个，每项声明本地 `id`、`scope`（同工具命名规则）、`description`、`pagination`，实现 `search(request, signal)`。来源名由宿主加命名空间，`scope` 保持原值；描述写明是关键词检索、列表浏览还是链接查询。
 
-请求包含 `scope`、可选 `provider`、`query`、`page`、`limit` 和可选 `filters`。按真实能力声明 `native` 或 `single_page` 分页；默认要求非空查询，只有支持无关键词浏览的来源才使用 `allowEmptyQuery: true`。自定义过滤字段应声明 `filters` 契约，并在执行时再次验证。
-
-结果包含 `status`、`items`、`hasMore` 和可选 `truncated`。每项有稳定 `id`、`title`、`summary`，可选 `url`、`content`、`source` 和有界标量 `fields`。`content` 留在宿主当前轮的引用存储中，摘要检索不直接返回它；宿主生成搜索引用，使用 `read_reference` 按需读取。若另有客户端资源引用，放在 `fields` 中并在后续工具里验证；这与宿主搜索引用是两个不同引用。
-
-搜索必须只读，不发送消息、改计数、下载音频、隐式转录或启动后台作业。`hasMore` 只表示确有下一页；单页响应被数量或文本边界裁剪时用 `truncated`，不能假装 page 2 能取回剩余内容。区分 `empty`、`unavailable`、`forbidden`、`rate_limited`、`upstream_error` 与 `invalid_request`。
+- 请求含 `scope`、可选 `provider`、`query`、`page`、`limit` 及可选 `filters`。分页按真实能力声明 `native` 或 `single_page`；仅支持无关键词浏览的来源设 `allowEmptyQuery: true`。自定义 `filters` 须声明契约并在执行时重检。
+- 返回含 `status`、`items`、`hasMore` 和可选 `truncated`。每项含稳定 `id`、`title`、`summary`，可选 `url`、`content`、`source` 及标量 `fields`。`content` 存进宿主当前轮引用存储，摘要不直接下发，由 `read_reference` 按需读取；插件自有的客户端资源引用放 `fields` 并在后续工具里校验。
+- 搜索必须只读，禁止发消息、改计数、下音频、隐式转录或启后台任务。`hasMore` 仅表示确有下一页；单页裁剪用 `truncated`。状态码须准确区分 `empty`、`unavailable`、`forbidden`、`rate_limited`、`upstream_error`、`invalid_request`。
 
 ## 从示例开始
 
-仓库 `examples/plugins/hello/` 提供零依赖 `index.mjs`、清单和可复制的 Node.js smoke test。它包含 `greet` 只读工具、`hello` 范围的合成检索、参数验证、取消与 `dispose`，没有外部服务或秘密。
+`examples/plugins/hello/` 提供零依赖 `index.mjs`、清单和 Node.js smoke test（含 `greet` 工具、`hello` 合成检索、参数校验、取消与 `dispose`）。
 
-先在示例目录执行 README 中的本地验证，再复制到独立公开仓库的根目录，修改 ID、作者与版本并发布审核过的提交。不要把 Hanori 仓库子目录直接当作安装源。实际 TypeScript 契约以 `packages/shared/src/plugin-runtime.ts`、`packages/shared/src/search.ts` 和清单校验为准。
+先在示例目录跑通 README 中的本地验证，再复制到独立公开仓库根目录，改好 ID、作者和版本后发布审核过的提交（不要直接把 Hanori 子目录当安装源）。完整 TypeScript 契约见 `packages/shared/src/plugin-runtime.ts`、`packages/shared/src/search.ts` 及清单校验代码。
 
-发布前验证合法与非法参数、身份筛选、会话间数据隔离、并发与取消、正文与缓存上限，并检查结果不会携带秘密。外部 API 的真实可用性、授权与费用需要单独验证；纯合成 smoke test 只证明本地契约。
+发布前测完合法/非法参数、权限过滤、会话隔离、并发取消、大小上限和脱敏；外部 API 的真实可用性、授权与费用需另行实测。

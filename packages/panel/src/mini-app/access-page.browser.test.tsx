@@ -81,10 +81,10 @@ test("renders the three admin access sections and the minimal-permission group l
 
   render(<AccessPage botId={BOT_ID} session={SESSION} />);
 
-  await expect.element(page.getByRole("heading", { name: "Access" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
   await expect.element(page.getByLabelText("Access summary")).toHaveTextContent("0/1");
   await expect.element(page.getByLabelText("Access summary")).toHaveTextContent("Operators1");
-  await expect.element(page.getByRole("heading", { name: "Group grants" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Group access" })).toBeVisible();
   await expect.element(page.getByRole("heading", { name: "Operators" })).toBeVisible();
   await expect.element(page.getByRole("heading", { name: "90-day activity" })).toBeVisible();
   await expect
@@ -116,9 +116,7 @@ test("allows a cached non-admin chat to trigger live verification", async () => 
   );
   render(<AccessPage botId={BOT_ID} session={SESSION} />);
 
-  await expect
-    .element(page.getByRole("button", { name: "Verify membership and grant" }))
-    .toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Verify and grant" })).toBeVisible();
 });
 
 test("projects people search results without rendering private profile fields", async () => {
@@ -146,8 +144,8 @@ test("projects people search results without rendering private profile fields", 
   );
   render(<AccessPage botId={BOT_ID} session={SESSION} />);
 
-  await expect.element(page.getByRole("heading", { name: "Access" })).toBeVisible();
-  await page.getByLabelText("Find a person").fill("ada");
+  await expect.element(page.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
+  await page.getByLabelText("Find a user").fill("ada");
   await expect.element(page.getByRole("option", { name: /Ada Lovelace/ })).toBeVisible();
 
   expect(document.body.textContent).not.toContain("PRIVATE_NOTE");
@@ -190,7 +188,7 @@ test("sends the Bot-scoped CSRF token and refetches after granting a chat", asyn
   await expect.element(page.getByLabelText("Note").first()).toHaveAttribute("maxlength", "200");
   await page.getByLabelText("Note").first().fill(" Pilot group ");
   await page.getByRole("button", { name: "Grant group access" }).click();
-  await expect.element(page.getByRole("button", { name: "Revoke group grant" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Revoke group access" })).toBeVisible();
 
   expect(listRequests).toBe(2);
   expect(mutationInit).toMatchObject({
@@ -223,10 +221,10 @@ test("requires explicit operator revocation confirmation and refetches after del
   await expect.element(page.getByRole("heading", { name: "Grace Hopper" })).toBeVisible();
   await page.getByRole("button", { name: "Revoke operator" }).click();
   await expect
-    .element(page.getByText("This person loses Operator access immediately."))
+    .element(page.getByText("This user will lose Operator access immediately."))
     .toBeVisible();
   await page.getByRole("button", { name: "Confirm revoke" }).click();
-  await expect.element(page.getByText("No operators have been granted access.")).toBeVisible();
+  await expect.element(page.getByText("No operators yet.")).toBeVisible();
 
   expect(listRequests).toBe(2);
   expect(deleteInit).toMatchObject({

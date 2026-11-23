@@ -147,9 +147,7 @@ test("a failed new filter hides old data and supports retry", async () => {
   await page.getByRole("button", { name: "30d", exact: true }).click();
   await vi.waitFor(() => expect(stats()).toHaveLength(8));
   stats()[4]!.reject(new Error("offline"));
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("Usage data could not be loaded.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load usage data.");
   await expect.element(page.getByText("111", { exact: true })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await vi.waitFor(() => expect(stats()).toHaveLength(11));
@@ -191,9 +189,7 @@ for (const failure of ["http", "application", "json"] as const) {
       batch.filter((request) => request !== model),
       222,
     );
-    await expect
-      .element(page.getByRole("alert"))
-      .toHaveTextContent("Usage data could not be loaded.");
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load usage data.");
     await expect.element(page.getByText("111", { exact: true })).not.toBeInTheDocument();
     await expect.element(page.getByText("222", { exact: true })).not.toBeInTheDocument();
   });
@@ -258,7 +254,7 @@ for (const failure of ["http", "application", "network"] as const) {
     else request.resolve(response([], failure !== "application", failure === "http" ? 503 : 200));
     await expect
       .element(page.getByRole("alert"))
-      .toHaveTextContent("Daily activity could not be loaded.");
+      .toHaveTextContent("Couldn't load daily activity.");
     await expect.element(page.getByText("Less", { exact: true })).not.toBeInTheDocument();
     await expect.element(page.getByText("222", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Retry", exact: true }).click();
@@ -348,18 +344,14 @@ test("a late old success cannot hide the current filter error", async () => {
   await expect.element(page.getByRole("alert")).toBeVisible();
   completeStats(old, 111);
   await flushResponses();
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("Usage data could not be loaded.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load usage data.");
   await expect.element(page.getByText("111", { exact: true })).not.toBeInTheDocument();
 });
 
 test("a failed bot list can be retried independently of usage data", async () => {
   vi.mocked(fetch).mockImplementationOnce(() => Promise.resolve(botResponse([], 0, false)));
   await initialSuccess();
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("Bot filters could not be loaded.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load Bot filters.");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
   expect(requests).toHaveLength(5);
@@ -434,9 +426,7 @@ test("keeps Bot filters atomic when the total changes on page two and retries", 
   await start();
   completeStats(stats(), 111);
   heatmaps()[0]!.resolve(response([]));
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("Bot filters could not be loaded.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load Bot filters.");
   await page.getByRole("combobox").click();
   expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
   await expect
@@ -460,9 +450,7 @@ test("keeps the all-Bot comparison visible when filtered statistics fail", async
   filteredStats()[0]!.reject(new Error("offline"));
   heatmaps()[0]!.resolve(response([]));
 
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("Usage data could not be loaded.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load usage data.");
   await vi.waitFor(() =>
     expect(
       Array.from(document.querySelectorAll(".recharts-cartesian-axis-tick-value")).map(
@@ -480,9 +468,7 @@ test("retries an all-Bot comparison error without hiding filtered statistics", a
   heatmaps()[0]!.resolve(response([]));
 
   await expect.element(page.getByText("111", { exact: true })).toBeVisible();
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("The all-Bot comparison could not be loaded.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load Bot comparison.");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await vi.waitFor(() => expect(comparisons()).toHaveLength(2));
   comparisons()[1]!.resolve(response([{ botId: "a", botName: "Alpha", ...metrics(222) }]));

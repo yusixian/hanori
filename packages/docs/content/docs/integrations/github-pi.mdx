@@ -1,15 +1,15 @@
 ---
 title: GitHub 与编码 Worker
-description: 配置 GitHub App、授权仓库访问，并理解隔离编码任务的安全边界。
+description: 配置 GitHub App、授权仓库访问，并了解隔离编码任务的安全边界。
 ---
 
-GitHub 集成是可选的管理员能力。它使用 GitHub App 安装授权把访问范围限定到选定仓库，再由服务端为 Bot 或编码任务提供短期凭据。它不是让每个用户粘贴长期 Personal Access Token。
+GitHub 集成通过 GitHub App 安装授权把访问范围限定在选定仓库，再由服务端签发短期凭据，无需用户粘贴长期 Personal Access Token。
 
 ## GitHub App 配置
 
-实例管理员需要准备完整的一组 GitHub App 配置：App ID、Client ID、Client Secret、私钥和 slug。五项应全部填写或全部留空；只填一部分会让启动或更新检查失败。
+准备完整的一组 GitHub App 凭据：App ID、Client ID、Client Secret、私钥和 slug。五项必须全部填写或全部留空，缺项会导致启动或更新检查失败。
 
-GitHub App 的三个地址都应使用实例的公开 origin：
+GitHub App 的三个地址均使用实例的公开 origin（将 `${BETTER_AUTH_URL}` 替换为实际地址）：
 
 ```text
 Homepage: ${BETTER_AUTH_URL}
@@ -17,50 +17,40 @@ Setup:    ${BETTER_AUTH_URL}/api/github-app/setup
 Callback: ${BETTER_AUTH_URL}/api/github-app/callback
 ```
 
-上面是配置格式示例；实际值必须替换成你的实例地址。私钥写入环境变量时使用带字面 `\n` 的单行形式，并限制文件权限。安装流程不要开启会绕过 Setup URL 的快捷 OAuth 选项，否则服务端无法可靠知道用户选择了哪个 installation。
+私钥写入环境变量时使用带字面 `\n` 的单行 PEM，并收紧文件权限。安装流程不要开启绕过 Setup URL 的快捷 OAuth 选项，否则服务端无法获知所选 installation。
 
 ## 在面板中授权
 
-owner 或 admin 从对应 Bot 的 AI/GitHub 入口发起授权，跳转到 GitHub 选择安装范围和仓库，完成回调后回到面板。授权状态、仓库列表和撤销操作都以服务端记录为准；viewer/editor 不应看到授权入口。
+owner 或 admin 在对应 Bot 的 AI/GitHub 入口发起授权，跳转 GitHub 选择安装范围和仓库，回调后返回面板。授权状态、仓库列表和撤销均以服务端为准；viewer/editor 无权访问该入口。
 
-授权前先决定最小仓库范围。不要为了方便选择“所有仓库”，也不要让 Bot 访问不需要的私有项目。撤销 GitHub App installation 或面板连接后，应在下一次请求中阻止旧凭据继续使用。
-
-在面板断开连接会清理该 installation 的令牌与连接状态缓存；断开前尚未完成的刷新不能重新填入旧缓存。重新连接后的请求会重新获取状态，但断开连接不代表已经发出的 GitHub 操作已撤销。
+按最小权限选择仓库，避免图省事选「所有仓库」。在面板断开连接会清理该 installation 的令牌与状态缓存（未完成的旧刷新无法回填缓存），下一次请求即失效，但已发出的 GitHub 操作不会撤销。
 
 ## Issue 创建确认
 
-管理员可以先让 Bot 调用 `github_list_repositories` 查看当前 Bot 配置的仓库白名单，默认每页 50 个，支持 `page`、`limit` 分页。它不请求凭据、不访问 GitHub，也不向普通成员开放；返回 `accessVerified=false`，实际访问仍要通过现有权限检查。
-
-当用户只说“自己的仓库”或仓库读取返回 404 时，Bot 应先结合白名单和已有记忆、历史中的明确线索定位 `owner/repo`，仍有歧义再询问用户，不盲猜 owner 别名。404 也可能表示私有仓库无访问权限。仓库定位失败的工具结果包含 `repository_resolution_failed` 和尝试的仓库名，面板日志可据此追踪。
-
-`github_create_issue` 先保存固定提案，再向发起管理员发送 Telegram 确认卡。默认**不过期**，保存后即使超过 10 分钟或服务重启，原卡仍可确认。配置字段 `githubToolsConfig.createIssueConfirmationTtlMinutes` 为 `null` 或未设置时不过期；设为正安全整数时按分钟设置有效期；生成提案时会校验到期时间是否在可表示的日期范围内。卡片显示“不过期”或实际到期时间，修改配置只影响新提案。
-
-只有发起该提案的管理员能在原聊天中确认或撤销；如果是在 Telegram 话题中发起，还必须回到原话题。普通群里的回复串不属于话题，回复不同消息不会影响新提案的查询、撤销或确认。每次点击都会重新检查 Bot 与 GitHub 工具是否启用、当前管理员身份、仓库白名单、App 安装范围和当前凭据。权限撤销或仓库移出白名单后，旧卡不能执行。旧卡绑定提案 ID、仓库、标题、完整正文和 SHA-256；修改内容需要创建新提案，并明确撤销原提案。相同仓库或标题的新提案不会自动取消其它意图。
-
-点击“撤销提案”可取消待确认请求；也可让 Bot 调用 `github_cancel_issue_proposal`，按明确的提案 ID 撤销。取消、过期或完成后，旧按钮不能再次执行。让 Bot 查看“待确认 Issue 提案”（`github_pending_issue_proposals`），可查询自己在当前会话的待确认、执行中及结果未知提案，并重新发送最多 10 张卡片。
-
-重复或并发点击最多触发一次创建请求。正文末尾会附带一个包含提案 ID 和完整 hash 的 HTML 注释，用于核实远端结果。claim 后、发送创建请求前复查失败或执行中断，提案显示“未执行”，旧卡不能再执行。进入发送阶段后，如果网络、GitHub 回执或数据库回执不明，或服务重启，提案会保守显示“结果未知”。点击“核实已有 Issue”只使用当前授权读取仓库，包括已关闭 Issue；必须匹配固定标题、完整正文和核实标记，才记录成功。读取最多 10 页、每页 100 条，整体限时 30 秒；查询失败或未找到时仍保持结果未知，**不会重新创建**。不要把“未找到”当成创建失败，也不要立即另建同内容提案。
-
-如果确认被拒，提示会区分账号、聊天和话题不匹配。旧版本已生成的普通群确认卡可能仍绑定旧回复串：本次更新不会改写其固定内容或 SHA-256。若卡片仍显示“待发起管理员确认”且提示旧回复串问题，可重新发起提案；“正在执行”或“结果未知”时应先核实原操作，不要重复创建。回调日志记录提案 ID、点击账号、聊天、原始回复串、实际话题和处理状态，不记录提案正文或凭据。
-
-Bot JSON 导出和导入不会携带或重放待确认提案；待确认查询只返回提案元数据，工具日志仅保留状态、hash 和长度等元数据。实例管理员的完整数据库备份仍按原有 owner/admin 权限保存持久化数据。
-
-push、丢弃 workspace、创建 PR、更新 Issue 等其它操作仍沿用原来的 **10 分钟**确认；push、workspace 和 PR 的精确状态校验保持不变。
+- **仓库定位**：管理员可让 Bot 调用 `github_list_repositories` 查看当前 Bot 的仓库白名单（默认每页 50 条，支持 `page`/`limit`）。该工具不请求凭据、不访问 GitHub、仅管理员可用，返回 `accessVerified=false`，实际访问仍需过权限校验。遇到「自己的仓库」或 404（可能是私有仓无权访问）时，Bot 结合白名单与上下文定位 `owner/repo`，仍有歧义则询问用户，失败结果带 `repository_resolution_failed` 便于日志追踪。
+- **提案与有效期**：`github_create_issue` 先保存固定提案，再向发起管理员发送 Telegram 确认卡。默认**不过期**（跨 10 分钟或重启仍有效）；`githubToolsConfig.createIssueConfirmationTtlMinutes` 为 `null` 或未设时不过期，设为正安全整数时按分钟生效（仅影响新提案）。卡片会标注「不过期」或具体到期时间。
+- **绑定与校验**：仅发起管理员可在原聊天（若在话题中则须在原话题）确认或撤销。普通群的回复串不算话题，回复不同消息不影响提案操作。每次点击都重新校验 Bot/工具启用状态、管理员身份、仓库白名单、App 安装范围和凭据。卡片绑定提案 ID、仓库、标题、完整正文和 SHA-256；修改内容需另建新提案并撤销旧提案。
+- **撤销与查询**：点「撤销提案」或调用 `github_cancel_issue_proposal` 可取消待确认提案；调用 `github_pending_issue_proposals` 可查看当前会话中待确认、执行中及结果未知的提案，并重发最多 10 张卡片。已取消、过期或完成的旧按钮不可再执行。
+- **防重与核实**：重复或并发点击最多触发一次创建。正文末尾会附带含提案 ID 和完整 hash 的 HTML 注释用于远端核实。
+  - claim 后、发出请求前失败或中断：显示「未执行」，旧卡作废。
+  - 进入发送阶段后遇网络异常、回执不明或服务重启：显示「结果未知」。点「核实已有 Issue」会用当前授权读取仓库（含已关闭 Issue，最多 10 页 × 100 条，限时 30 秒），标题、正文和标记完全匹配才记为成功；查不到或失败时保持「结果未知」，**不会自动重建**。
+- **兼容与日志**：确认被拒时会区分账号、聊天和话题不匹配。旧版本生成的普通群确认卡若因旧回复串校验失败且状态为「待发起管理员确认」，可重新发起；「正在执行」或「结果未知」时应先核实再决定。回调日志只记提案 ID、点击账号、聊天、原始回复串、实际话题和状态，不记正文或凭据。
+- **导出与其它操作**：Bot JSON 导出/导入不携带待确认提案；完整数据库备份按 owner/admin 权限保留持久化数据。push、丢弃 workspace、创建 PR、更新 Issue 等操作仍沿用 **10 分钟**确认与精确状态校验。
 
 ## 隔离 Pi coding worker
 
-面板预填的 Git 提交署名是 `Hanori <hanori@example.invalid>`。你可以在 Bot 的 GitHub 工具设置里填写自己的作者名称和邮箱。
+面板预填的 Git 提交署名为 `Hanori <hanori@example.invalid>`，可在 Bot 的 GitHub 工具设置中修改。
 
-编码 worker 是可选的 Compose profile。它接收服务端授权的有限工作任务，在单独网络和工作区中运行 Pi coding agent；worker 不应直接持有数据库凭据、GitHub App 私钥或推送权限。
+编码 worker 是可选 Compose profile，在独立网络和工作区中运行 Pi coding agent，不持有数据库凭据、GitHub App 私钥或推送权限。
 
-启用时，`COMPOSE_PROFILES` 与 `CODING_WORKER_SECRET` 必须同时配置。worker 与服务端通过内部 secret 建立认证，工作目录、Git 目录和出口代理由部署配置提供。任务应有单次启动、超时、取消、干净工作区和精确状态确认等边界。
+启用时必须同时设置 `COMPOSE_PROFILES` 和 `CODING_WORKER_SECRET`。worker 与服务端通过内部 secret 认证，工作目录、Git 目录和出口代理由部署配置提供，任务受单次启动、超时、取消、干净工作区和精确状态确认约束。
 
-GitHub 写入、push、创建 PR 和最终确认属于受信任的服务端流程。Bot 或 worker 的“建议已完成”不等于远端分支、PR 或生产部署已经改变；管理员应在 GitHub 和面板中复核结果。
+GitHub 写入、push、创建 PR 和最终确认都在受信任的服务端完成。Bot 或 worker 汇报「已完成」不等于远端分支或 PR 已生效，管理员需在 GitHub 和面板复核。
 
 ## 常见失败
 
-- 回调失败：检查公开 origin、HTTPS、Setup/Callback 地址和 GitHub App 设置是否逐字匹配。
-- 看不到仓库：重新检查 installation 选择、App 权限和当前 Bot 绑定。
-- worker 不在线：检查 Compose profile、worker secret、健康检查和出口代理，不要把 worker 直接暴露到公网。
-- worker 响应异常或中途断开：任务返回失败，不会自动重发。若 worker 已接受任务，后续任务仍须等待新的 worker 启动身份通过健康校验；连接失败不表示工作区没有变化，应先检查工作区状态。
-- 任务完成但 PR 不存在：把 worker 结果当作待确认状态，登录 GitHub 检查分支和 PR，再决定是否继续。
+- **回调失败**：核对公开 origin、HTTPS、Setup/Callback URL 与 GitHub App 设置是否完全一致。
+- **看不到仓库**：检查 installation 范围、App 权限和当前 Bot 绑定。
+- **worker 不在线**：检查 Compose profile、worker secret、健康检查和出口代理；勿将 worker 暴露到公网。
+- **worker 响应异常或中途断开**：任务记为失败且不自动重发；若 worker 已接单，后续任务需等待新启动的 worker 通过健康检查。连接断开不代表工作区未改动，请先检查工作区。
+- **任务完成但无 PR**：将 worker 输出视为待确认状态，到 GitHub 核对分支与 PR。

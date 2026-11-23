@@ -15,7 +15,7 @@ export const auth = {
     google: "Continue with Google",
   },
   invitation: {
-    missingId: "The invitation link is missing required information",
+    missingId: "This invitation link is missing required information",
     title: "Join workspace",
     description: "Register or sign in with the invited email address, then accept the invitation.",
     namePlaceholder: "Name",
@@ -27,11 +27,11 @@ export const auth = {
   },
   resetPassword: {
     title: "Reset password",
-    description: "Your existing sessions will expire after you set a new password.",
+    description: "Setting a new password signs out your other devices.",
     newPasswordPlaceholder: "New password (at least 8 characters)",
     confirmPasswordPlaceholder: "Confirm new password",
     submit: "Reset password",
-    success: "Your password has been reset. Please sign in again.",
+    success: "Password reset. Please sign in again.",
   },
   settings: {
     eyebrow: "Your corner of Hanori",
@@ -39,7 +39,7 @@ export const auth = {
     sectionNavigation: "Settings sections",
     securityTitle: "Sign-in & security",
     securityDescription: "Changing your password signs out your other devices.",
-    passwordHint: "Use at least 8 characters",
+    passwordHint: "At least 8 characters",
     teamTitle: "A space to share",
     teamDescription: "Choose who joins your workspace and what they can do.",
     memberRole: "Role for {{name}}",
@@ -52,8 +52,7 @@ export const auth = {
     confirmNewPassword: "Confirm new password",
     changePassword: "Change password",
     inviteTitle: "Invite member",
-    inviteDescription:
-      "Invitation links expire after 48 hours, can only be accepted once, and are tied to the specified email address.",
+    inviteDescription: "Links expire in 48 hours, work once, and are tied to the invited email.",
     emailLabel: "Email",
     emailPlaceholder: "member@example.com",
     roleLabel: "Role",
@@ -65,54 +64,51 @@ export const auth = {
     noPendingInvitations: "No pending invitations",
     organizationTitle: "Organization",
     ownerDescription: "{{name}} · Owners can manage all member permissions.",
-    passwordChanged: "Password changed. Sessions on other devices have expired.",
-    invitationLinkCopied: "Invitation link generated and copied to the clipboard.",
-    invitationLinkGenerated: "Invitation link generated. Copy the link below manually.",
-    resetLinkCopied: "Password reset link generated and copied to the clipboard.",
-    resetLinkGenerated: "Password reset link generated. Copy the link below manually.",
+    passwordChanged: "Password updated. Other devices have been signed out.",
+    invitationLinkCopied: "Invitation link copied to clipboard.",
+    invitationLinkGenerated: "Invitation link ready. Copy it below.",
+    resetLinkCopied: "Password reset link copied to clipboard.",
+    resetLinkGenerated: "Password reset link ready. Copy it below.",
   },
   asr: {
     title: "Shared audio transcription",
     description:
-      "Manage one account per provider for every Bot. Each task still needs administrator confirmation.",
+      "Manage transcription providers shared across all Bots. Each job still requires admin confirmation.",
     loading: "Loading transcription settings…",
-    loadFailed: "Transcription settings could not be loaded.",
+    loadFailed: "Couldn't load transcription settings.",
     reload: "Reload saved settings",
     save: "Save ASR settings",
     saving: "Saving…",
-    saved: "Transcription settings saved. New tasks will use the updated accounts.",
-    saveFailed: "Settings could not be saved. Check the provider, model and amounts.",
-    conflict:
-      "Another administrator changed these settings. Reload the saved version before saving again.",
+    saved: "Transcription settings saved. New jobs will use the updated accounts.",
+    saveFailed: "Couldn't save settings. Check the provider, model, and budget fields.",
+    conflict: "Another admin updated these settings. Reload before saving.",
     provider: "Transcription provider",
     priority:
-      "Before confirmation, available accounts are considered in this order: Tencent, Alibaba, Groq, OpenAI compatible. Confirmed tasks keep their provider.",
+      "Available accounts are tried in order: Tencent → Alibaba → Groq → OpenAI-compatible. Once confirmed, the provider is locked.",
     enabled: "Enable this account",
     model: "Model / engine",
     region: "Tencent Cloud region",
-    baseUrl: "OpenAI compatible API URL",
+    baseUrl: "OpenAI-compatible API URL",
     configured: "Configured · leave blank to keep",
-    secretPlaceholder: "Enter a secret",
+    secretPlaceholder: "Enter secret",
     clearSecret: "Clear saved secret",
     keepSecret: "Keep saved secret",
     secretHint:
-      "Secrets are encrypted on the server and never shown here. Blank inputs keep saved secrets; clearing takes effect when you save.",
+      "Secrets are encrypted on the server and hidden here. Leave blank to keep; clearing applies on save.",
     policyLink: "Official policy",
-    freeOnly:
-      "I confirm this key belongs to a Groq Free Plan account. Paid-plan keys must use a positive price; the app cannot verify the account plan.",
+    freeOnly: "Confirm this key is on the Groq Free Plan (enter the actual rate for paid plans).",
     budgetHint:
-      "Use the provider’s billing currency. A zero rate means unknown, except for verified Groq free-only usage. Unverified balances reserve the full estimated cost. CNY and USD budgets are separate.",
-    quotaVerified:
-      "I manually checked this account’s free quota and its validity in the provider console.",
+      "Uses each provider's billing currency (CNY and USD tracked separately). A 0 rate means unknown except on verified Groq Free Plans; unverified quotas reserve the full estimate.",
+    quotaVerified: "I've verified this account's free quota and expiry in the provider console.",
     quotaExpiry: "Verified free quota expires on",
     policyDate: "Pricing / policy checked on",
     quotaHint:
-      "The app records its own usage. Provider-wide remaining quota is unknown, and may be shared elsewhere. Manual verification expires on the date above; estimates do not subtract free quota.",
+      "Tracks only this app's usage, not external usage on the same account. Verification expires on the date above; estimates don't deduct free quota.",
     providers: {
       tencent: "Tencent Cloud · standard recording ASR",
       aliyun: "Alibaba Cloud Model Studio · Paraformer",
       groq: "Groq · Whisper",
-      openai: "OpenAI compatible",
+      openai: "OpenAI-compatible",
     },
     secrets: {
       secretId: "SecretId",
@@ -128,12 +124,12 @@ export const auth = {
     },
     policies: {
       tencent:
-        "The preset uses standard recording ASR (16k_zh). The official policy provides 10 hours per month; large-model engines do not share that allowance. Account balance is unknown.",
+        "Uses standard recording ASR (16k_zh). Official free tier: 10 hrs/month (excludes large models). Check your actual balance.",
       aliyun:
-        "The preset uses Beijing-region paraformer-v2. Its published allowance is 10 hours per month, valid for that month. Account eligibility and remaining quota need checking.",
-      groq: "The published Whisper Free Plan limits include 8 hours per day and 2 hours per hour, shared across the organization. Your account’s actual limits apply.",
+        "Uses Beijing paraformer-v2. Official free tier: 10 hrs/month (current month only). Check eligibility and remaining quota.",
+      groq: "Whisper Free Plan limits: 8 hrs/day, 2 hrs/hour (shared across your org). Actual account limits apply.",
       openai:
-        "Use an HTTPS provider that supports verbose_json and segment timestamps. Check its price and data policy; there is no assumed free allowance.",
+        "Requires an HTTPS endpoint supporting verbose_json and segment timestamps. No free tier assumed; check pricing and data policy.",
     },
   },
   roles: {
@@ -144,12 +140,12 @@ export const auth = {
   },
   errors: {
     operationFailed: "Operation failed",
-    passwordMismatch: "The passwords do not match",
+    passwordMismatch: "Passwords do not match",
     resetPasswordFailed: "Failed to reset password",
     invitationAcceptFailed: "Failed to accept invitation",
     signUpFailed: "Registration failed",
     loginFailed: "Sign-in failed",
     membershipRequired:
-      "This account has not joined the workspace. Register using an invitation link.",
+      "This account isn't in the workspace yet. Register using an invitation link.",
   },
 } as const;

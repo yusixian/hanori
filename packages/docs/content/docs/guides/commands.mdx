@@ -1,53 +1,53 @@
 ---
 title: Telegram 命令参考
-description: 按访问范围整理当前共享命令目录，以及每条命令的常用用法。
+description: 按访问范围整理的命令目录与常用用法。
 ---
 
-Bot 会从共享命令目录和运行时注册表生成帮助与 Telegram 命令菜单，因此 `/help` 是当前实例可用性的最终依据。下面列的是产品目录中的命令；某些命令可能因为 Bot 配置、聊天类型、角色或功能开关而隐藏。
+Bot 的 `/help` 和 Telegram 命令菜单由共享命令目录与运行时注册表动态生成，**`/help` 是当前实例可用命令的最终依据**。下表列出完整目录，部分命令会因 Bot 配置、聊天类型、角色或功能开关而隐藏。
 
 ## 基础和对话
 
-| 命令       | 作用                                       | 常见范围   |
-| ---------- | ------------------------------------------ | ---------- |
-| `/start`   | 显示欢迎信息。                             | 公开       |
-| `/help`    | 显示当前可用命令。                         | 公开       |
-| `/panel`   | 打开已启用的 Bot 帮助或管理面板。          | 公开       |
-| `/md2tg`   | 把 Markdown 转成 Telegram 富文本。         | 公开       |
-| `/clear`   | 清除当前聊天的对话历史。                   | 按聊天类型 |
-| `/privacy` | 查看或切换个人化模式，或发起个人数据删除。 | 公开       |
+| 命令       | 作用                                    | 常见范围   |
+| ---------- | --------------------------------------- | ---------- |
+| `/start`   | 显示欢迎信息                            | 公开       |
+| `/help`    | 显示当前可用命令                        | 公开       |
+| `/panel`   | 打开已启用的 Bot 帮助或管理面板         | 公开       |
+| `/md2tg`   | 把 Markdown 转成 Telegram 富文本        | 公开       |
+| `/clear`   | 清除当前聊天的对话历史                  | 按聊天类型 |
+| `/privacy` | 查看/切换个人化模式，或发起个人数据删除 | 公开       |
 
 ## AI 和运行控制
 
-| 命令                | 作用                                                                      |
-| ------------------- | ------------------------------------------------------------------------- |
-| `/provider`         | 查看、切换或重置当前聊天的 Provider。                                     |
-| `/model`            | 查看、切换或重置当前聊天的模型。                                          |
-| `/replymode`        | 切换回复模式。                                                            |
-| `/richtext`         | 切换 AI 富文本增强。                                                      |
-| `/stop` / `/resume` | 停止或恢复 AI 回复。                                                      |
-| `/quota`            | 查看 AI 与图片用量。                                                      |
-| `/summary`          | 总结当前聊天/话题的可用消息，支持最近条数、小时、今天或昨天；会发送结果。 |
+| 命令                | 作用                                                                 |
+| ------------------- | -------------------------------------------------------------------- |
+| `/provider`         | 查看、切换或重置当前聊天的 Provider                                  |
+| `/model`            | 查看、切换或重置当前聊天的模型                                       |
+| `/replymode`        | 切换回复模式                                                         |
+| `/richtext`         | 切换 AI 富文本增强                                                   |
+| `/stop` / `/resume` | 停止或恢复 AI 回复                                                   |
+| `/quota`            | 查看 AI 与图片用量                                                   |
+| `/summary`          | 总结当前聊天/话题的消息（支持条数、小时、today/yesterday）并发送结果 |
 
 ## 图片和媒体
 
-| 命令        | 作用                           |
-| ----------- | ------------------------------ |
-| `/imagegen` | 切换群组图片生成权限。         |
-| `/image`    | 查看图片预设、任务或取消任务。 |
-| `/draw`     | 按图片预设发起生成。           |
+| 命令        | 作用                         |
+| ----------- | ---------------------------- |
+| `/imagegen` | 切换群组图片生成权限         |
+| `/image`    | 查看图片预设、查询或取消任务 |
+| `/draw`     | 按预设发起生图               |
 
 ## 管理和集成
 
-| 命令             | 作用                                  | 备注                       |
-| ---------------- | ------------------------------------- | -------------------------- |
-| `/status`        | 查看 Bot 运行状态。                   | 管理员                     |
-| `/restart`       | 重启 Bot。                            | 管理员                     |
-| `/backup`        | 创建数据库备份。                      | 管理员                     |
-| `/clearreceived` | 清理收到的文件缓存。                  | 管理员                     |
-| `/timers`        | 查看或管理活跃定时器。                | 管理员                     |
-| `/mcp`           | 查看或管理 MCP 服务器。               | 管理员                     |
-| `/apikey`        | 在私聊中更新 Web 或图片工具 API Key。 | 管理员；参数会脱敏         |
-| `/cosinside`     | 从管理员私聊向配置的群发送消息。      | 管理员；内容属于副作用操作 |
+| 命令             | 作用                                | 备注               |
+| ---------------- | ----------------------------------- | ------------------ |
+| `/status`        | 查看 Bot 运行状态                   | 管理员             |
+| `/restart`       | 重启 Bot                            | 管理员             |
+| `/backup`        | 创建数据库备份                      | 管理员             |
+| `/clearreceived` | 清理收到的文件缓存                  | 管理员             |
+| `/timers`        | 查看或管理活跃定时器                | 管理员             |
+| `/mcp`           | 查看或管理 MCP 服务器               | 管理员             |
+| `/apikey`        | 在私聊中更新 Web 或图片工具 API Key | 管理员；参数会脱敏 |
+| `/cosinside`     | 从管理员私聊向配置的群发送消息      | 管理员；有副作用   |
 
 ## 参数示例
 
@@ -63,29 +63,32 @@ Bot 会从共享命令目录和运行时注册表生成帮助与 Telegram 命令
 /privacy forget confirm
 ```
 
-不要把 API Key、Token 或私密消息作为命令参数发到群里。`/apikey` 和 `/cosinside` 只应在 Bot 明确提示的私聊场景中使用；即使命令目录标记为管理员，服务端仍会再次校验权限。
+切勿把 API Key、Token 或私密内容作为参数发到群里。`/apikey` 和 `/cosinside` 仅应在私聊中使用；服务端始终会独立校验权限。
 
 ## 命令不显示时
 
-先发送 `/help`，再检查：
+先发 `/help`，再逐项检查：
 
-1. 当前聊天是否符合命令的访问范围。
-2. Bot 是否启用了对应能力，例如图片、MCP 或总结。
-3. 当前用户是否为管理员或被授予 Mini App/治理范围。
-4. Bot 是否在最近重启后完成了注册和配置同步。
-
-命令菜单只表达元数据和当前注册结果，不代表外部 Provider 或 Telegram API 一定可用。
+1. 当前聊天类型是否匹配命令范围。
+2. Bot 是否开启了对应功能（图片、MCP、总结等）。
+3. 当前用户是否为管理员，或已被授予对应治理权限。
+4. Bot 最近重启后是否完成了命令注册与配置同步。
 
 ## 语录贴纸 / Quote stickers
 
-启用语录渲染服务后，回复一条消息发送 `/q` 即可制作静态贴纸；此命令不调用语言模型，AI 关闭时也可用。在 Telegram 选中原文后回复 `/q` 可只引用选段。`/q 3` 从被回复消息向后取三条，`/q -3` 向前取三条（均含被回复消息，最多十条），最后按时间顺序排列。`/q r` 加一层父消息预览；参数可组合，例如 `/q -3 r purple`。
+开启语录渲染服务后，回复一条消息发送 `/q` 即可生成静态贴纸（不调用语言模型，AI 关闭时同样可用）。选中原消息片段后回复 `/q` 可只引选段。
 
-父预览只使用当前 Bot 在同一聊天、同一话题中可读取的真实来源。Telegram 不会在被回复消息中递归提供父消息，因此需要本地保存的回复关系和父内容。历史记录缺少关系、父消息不可读取或受隐私限制时，会省略预览并说明原因；不会根据正文猜测父消息。新 AI 回复会保存实际发送结果中的回复目标，发送失败后退回普通消息时不会虚构回复关系。父预览以细竖线区分，连续同作者消息合并时仍保留各自的预览。气泡按内容收缩，长句使用更宽的正文区域以减少换行。
+常用参数（可自由组合，如 `/q -3 r purple`）：
 
-连引只读取本 Bot 在当前聊天、当前话题可用的本地消息，不抓取 Telegram 全历史。单条直接回复不依赖历史；连引不足会明确显示实际条数。关闭历史采集、隐私限制、清理或重启前未保存的记录可能无法连引。图片与静态贴纸可加入语录，相邻同作者合并显示；长内容会作为 PNG 文件发送，避免缩成无法阅读的小字。
+- `/q 3` / `/q -3`：从被回复消息向后或向前连引 3 条（含本条，最多 10 条），按时间正序排列。
+- `/q r`：附带一层父消息预览。
+- `/q light`（或 `ai`、`purple`、`dark`、`blue`、`#RRGGBB`）：仅覆盖本次配色。
+- `/qcolor <配色|reset>`：保存或重置当前聊天默认配色（群内需群管理员或 Bot 管理员，私聊本人可设）。
 
-`/qcolor ai|purple|dark|light|blue|#RRGGBB` 保存当前聊天默认配色，`/qcolor reset` 恢复默认深色。群内持久修改限群管理员或 Bot 管理员，私聊本人可设置；普通成员仍可用 `/q light` 指定本次颜色。英文 Telegram 界面提供英文命令帮助和操作提示。
+使用边界：
 
-受保护内容与隐私 `off` 用户不能生成语录；引用作者的隐私设置也会再次校验。Spoiler 文字被遮盖，剧透图片不会下载；匿名转发不会反查真实身份。已生成的语录不能再次套入语录。头像不可用时使用彩色占位。引用作者的其他 AI 回合或隐私操作正忙时，会立即提示稍后重试，不排队等待；此时尚未发送语录。发送结果未知时先检查聊天，不要立即重复操作。
+- **连引与父预览**：只读取当前 Bot 在同聊天、同话题下已保存的本地消息，不抓取 Telegram 全历史；单条直接回复不依赖历史。Telegram 不递归返回父消息，若本地缺回复关系、父消息不可读或受隐私限制，会省略预览并说明原因，不靠文本猜测。
+- **渲染与格式**：支持图片和静态贴纸，相邻同作者合并显示并保留各自父预览；超长内容自动改发 PNG 文件，避免字小看不清。英文 Telegram 界面会显示英文帮助和提示。
+- **隐私与冲突**：受保护内容、隐私 `off` 用户以及已生成的语录贴纸不可再做语录；Spoiler 文字遮盖，剧透图片不下载，匿名转发不反查身份，无头像用彩色占位。若被引用作者正忙于其他 AI 回合或隐私操作，会直接提示稍后重试而不排队；发送结果不明时先检查聊天再决定是否重发。
 
-**English quick reference:** Reply with `/q`; use a Telegram text selection for an exact excerpt. `/q 3` quotes forward and `/q -3` backward, including the replied message (1–10 local messages). Add `r` for one parent preview and a color preset or `#RRGGBB` for a one-off theme. `/qcolor <color|reset>` persists the chat default; group changes require an administrator. Quotes respect privacy, protected content and topic boundaries. Long quotes are delivered as readable PNG documents. If an author is busy in another AI turn or privacy operation, the request fails promptly without sending; try again later.
+**English quick reference:** Reply with `/q`; select text first for an exact excerpt. `/q 3` quotes forward and `/q -3` backward, including the replied message (1–10 local messages). Add `r` for one parent preview and a color preset or `#RRGGBB` for a one-off theme. `/qcolor <color|reset>` persists the chat default (group changes require an admin). Quotes respect privacy, protected content, and topic boundaries. Long quotes are sent as readable PNG documents. If an author is busy in another AI turn or privacy operation, the request fails promptly without sending; try again later.

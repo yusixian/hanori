@@ -146,7 +146,7 @@ test("edits a separate draft, saves without enabling, compares two versions and 
   await page.getByRole("button", { name: "Save as new version (do not enable)" }).click();
   await expect
     .element(page.getByRole("status"))
-    .toHaveTextContent("active version has not changed");
+    .toHaveTextContent("The active version didn't change.");
   expect(api.activate).not.toHaveBeenCalled();
   expect(snapshot.files).toHaveLength(1);
   expect(api.save).toHaveBeenCalledWith(

@@ -67,7 +67,7 @@ test("keeps the draft and avoids success feedback when another tab has changed t
   await expect.element(address).toBeEnabled();
   await address.fill("new.example.com");
   await page.getByRole("button", { name: "Save platform address" }).click();
-  await expect.element(page.getByRole("alert")).toHaveTextContent("changed in another page");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("changed elsewhere");
   await expect.element(address).toHaveValue("new.example.com");
   expect(onSaved).not.toHaveBeenCalled();
 });
@@ -78,6 +78,6 @@ test("prevents saving when the existing configuration could not be loaded", asyn
     vi.fn(async () => new Response("{}", { status: 503 })),
   );
   render(<ImageMcpPlatformSettings onSaved={() => {}} />);
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load");
   await expect.element(page.getByRole("button", { name: "Save platform address" })).toBeDisabled();
 });

@@ -117,7 +117,7 @@ test("saves the global Provider, model, and display policy as one revision-check
   await page.getByLabelText("Model").selectOptions("model-b-fast");
   await page.getByLabelText("Default visibility").selectOptions("hide");
   await page.getByRole("button", { name: "Save selection" }).click();
-  await expect.element(page.getByText("The selection was persisted and applied.")).toBeVisible();
+  await expect.element(page.getByText("Saved and applied.")).toBeVisible();
 
   expect(mutation).not.toBeNull();
   expect(mutation!.url).toBe(`/api/mini-app/${BOT_ID}/ai-selection/global`);
@@ -157,12 +157,10 @@ test("keeps the global draft after a revision conflict until the Admin adopts la
   await page.getByLabelText("Provider").selectOptions("provider-b");
   await page.getByRole("button", { name: "Save selection" }).click();
   await expect
-    .element(
-      page.getByText("Your draft is preserved. Adopt the latest revision before editing again."),
-    )
+    .element(page.getByText("Your draft is kept. Load the latest version before editing again."))
     .toBeVisible();
   await expect.element(page.getByLabelText("Provider")).toHaveValue("provider-b");
-  await page.getByRole("button", { name: "Use latest revision" }).click();
+  await page.getByRole("button", { name: "Load latest" }).click();
   await expect.element(page.getByLabelText("Provider")).toHaveValue("provider-a");
 });
 
@@ -185,8 +183,8 @@ test("retries one pending Bot snapshot through the Bot-level endpoint", async ()
   );
 
   render(<GlobalAiSelectionSettings botId={BOT_ID} session={session("admin")} />);
-  await page.getByRole("button", { name: "Retry runtime update" }).click();
-  await expect.element(page.getByText("The persisted selection is now active.")).toBeVisible();
+  await page.getByRole("button", { name: "Retry apply" }).click();
+  await expect.element(page.getByText("Selection is now active.")).toBeVisible();
   expect(calls).toContainEqual({
     url: `/api/mini-app/${BOT_ID}/ai-selection/retry`,
     method: "POST",
@@ -278,7 +276,7 @@ test("saves a group override and display policy in revision order, then can rese
   await page.getByLabelText("Model").selectOptions("model-b-fast");
   await page.getByLabelText("Visibility in this group").selectOptions("hide");
   await page.getByRole("button", { name: "Save selection" }).click();
-  await expect.element(page.getByText("The selection was persisted and applied.")).toBeVisible();
+  await expect.element(page.getByText("Saved and applied.")).toBeVisible();
 
   expect(JSON.parse(String(mutations[0]!.init?.body))).toEqual({
     expectedRevision: "global-revision-1:1",

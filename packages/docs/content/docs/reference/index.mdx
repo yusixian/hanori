@@ -1,42 +1,43 @@
 ---
 title: 参考
-description: 查找面板入口、服务健康接口、角色边界和常用配置约定。
+description: 面板入口、角色边界、健康检查接口与数据库迁移约定。
 ---
 
-这一节适合已经完成首次配置、需要定位某个入口或核对权限边界的管理员。
+用于快速查阅管理面板页面、权限角色、健康接口和部署约束。
 
 ## 面板入口
 
-不同角色看到的导航不完全相同。常见页面包括：
+不同角色可见的导航不同，主要页面如下：
 
 | 入口                                | 用途                                           |
 | ----------------------------------- | ---------------------------------------------- |
 | Bots                                | 创建、启停和编辑 Bot。                         |
-| AI                                  | Provider、模型、系统提示词和 AI 相关设置。     |
-| Governance                          | 群组、用户和资源的用量、冷却、并发与路由策略。 |
-| Conversations / Profiles / Memories | 检查历史、人物档案和长期记忆。                 |
-| Generations / Files                 | 查看图片任务、生成状态和 Bot 收到的文件。      |
-| RSS / Summary / Timers              | 配置订阅源、群总结和定时任务。                 |
-| Logs / Usage                        | 查看运行诊断、用量和成本相关信息。             |
-| MCP Servers                         | 管理外部工具连接。                             |
-| Backup / Data                       | 创建备份、导出或管理数据。                     |
-| Settings                            | 工作区认证、成员和实例设置。                   |
+| AI                                  | Provider、模型、系统提示词与 AI 设置。         |
+| Governance                          | 群组、用户与资源的用量、冷却、并发及路由策略。 |
+| Conversations / Profiles / Memories | 查看对话历史、人物档案与长期记忆。             |
+| Generations / Files                 | 查看生图任务、状态与 Bot 收到的文件。          |
+| RSS / Summary / Timers              | 配置订阅源、群聊总结与定时任务。               |
+| Logs / Usage                        | 查看运行诊断、用量与成本统计。                 |
+| MCP Servers                         | 管理外部 MCP 工具连接。                        |
+| Backup / Data                       | 备份、导出与数据管理。                         |
+| Settings                            | 工作区认证、成员与实例设置。                   |
 
-界面隐藏按钮不等于授权；服务端会对每个 API 请求再次检查工作区角色、Bot 所有权、群组范围和资源权限。
+前端隐藏按钮不代表放行，服务端会对每个 API 请求校验工作区角色、Bot 归属、群组范围和资源权限。
 
 ## 用量筛选
 
-Usage 页的统计与趋势按所选时间范围和 Bot 加载；“按 Bot”图始终比较该时间范围内的全部 Bot。每日活跃度固定展示最近 365 天，只跟随 Bot 筛选。切换筛选时会显示加载状态；加载失败会显示错误，可在对应区域重试，不会将上一次筛选的数据当作当前结果。
+Usage 页的汇总与趋势跟随所选时间范围和 Bot；**按 Bot** 对比图始终比较所选时间内的全部 Bot；每日活跃度固定为近 365 天，只跟随 Bot 筛选。加载失败会在对应区域报错并提供重试，不沿用旧筛选数据。
 
-## 角色概念
+## 角色边界
 
-管理面板工作区通常包含 owner、admin、editor 和 viewer 等角色。owner 负责高风险实例设置和部分 OAuth/备份操作；admin 管理日常 Bot 和集成；editor/viewer 的权限由当前实现和资源策略决定。
+- **管理面板角色**：`owner`（高风险实例设置、部分 OAuth 与备份）、`admin`（日常 Bot 与集成管理）、`editor` / `viewer`（按当前资源策略受限）。
+- **Telegram Mini App 角色**：按 Bot 作用域独立划分 `admin`、`operator`、`viewer` 和 `none`，见[Telegram Mini App](/docs/guides/mini-app)。
 
-Telegram Mini App 使用另一套按 Bot 作用域的 admin、operator、viewer 和 none 角色，详见[Telegram Mini App](/docs/guides/mini-app)。不要把 Web 面板角色、Telegram 管理员身份和 Bot 群内管理员身份混为一谈。
+Web 面板角色、Bot 管理员身份与 Telegram 群内管理员互不等同。
 
 ## 健康接口
 
-服务端提供以下只读接口：
+服务端暴露三个只读接口：
 
 ```text
 GET /api/health
@@ -44,12 +45,16 @@ GET /api/health/live
 GET /api/health/ready
 ```
 
-`/api/health` 表示进程能响应；`live` 返回 live 状态和版本；`ready` 只有在必需依赖初始化成功时才返回 ready，否则可能返回 HTTP `503`。健康接口不代表外部 Provider、Telegram 真实投递或所有可选集成已经验证。
+- `/api/health`：进程可响应。
+- `/api/health/live`：返回存活状态与版本。
+- `/api/health/ready`：必需依赖全部就绪才返回 200，否则返回 HTTP `503`。
 
-## 版本和构建标识
+健康接口通过不代表外部模型 Provider、Telegram 投递或可选集成全部正常。
 
-产品版本来自根版本管理，运行时还可能暴露构建 commit 或 `APP_VERSION`。版本号用于人类可读的发布说明，commit 用于定位实际部署代码；报告问题时同时提供两者和发生时间。
+## 版本与构建标识
 
-## 数据和迁移约定
+产品 SemVer 版本由根 `package.json` 管理，运行时同时通过 `APP_VERSION` 或健康接口暴露完整 Git commit SHA。前者对应发布说明，后者用于定位线上代码；报障时请一并提供两者及发生时间。
 
-数据库 schema 位于 database 包，迁移按顺序应用。修改 schema 后应生成并审查迁移；不要编辑已经部署的迁移文件或手工删除迁移记录。embedding 维度、加密 key 和数据库密码属于部署级约束，不应在未备份时直接修改。
+## 数据库与迁移约定
+
+Schema 定义在 `packages/database`，迁移按顺序执行。改动 Schema 后生成并审查 SQL 迁移文件，**不要**修改已部署的迁移或手工删迁移记录。embedding 维度、加密密钥与数据库密码属于部署级参数，未做好备份前不要直接改动。

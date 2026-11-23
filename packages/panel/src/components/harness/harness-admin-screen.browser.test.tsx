@@ -233,8 +233,8 @@ test("lists projects with source, machines, topic, policy, and problems", async 
   await expect.element(page.getByRole("heading", { name: "cosine" })).toBeVisible();
   await expect.element(page.getByText("来自 harness.yaml")).toBeVisible();
   await expect.element(page.getByText("面板管理")).toBeVisible();
-  await expect.element(page.getByText("repo 文件")).toBeVisible();
-  await expect.element(page.getByText("按仓库推断")).toBeVisible();
+  await expect.element(page.getByText("仓库配置")).toBeVisible();
+  await expect.element(page.getByText("自动推断")).toBeVisible();
   expect(page.getByText("pnpm test").all()).toHaveLength(2);
   await expect
     .element(page.getByRole("link", { name: "打开话题" }))
@@ -324,7 +324,7 @@ test("adds a project from a repository with only changed policy fields", async (
   await expect.element(page.getByText("repo is archived")).toBeVisible();
 
   await page.getByRole("button", { name: "保存项目" }).click();
-  await expect.element(page.getByText("已添加 notes，已立即生效。")).toBeVisible();
+  await expect.element(page.getByText("已添加 notes，立即生效。")).toBeVisible();
   expect(api.createProject).toHaveBeenLastCalledWith({
     key: "notes",
     repo: "example-owner/notes",
@@ -393,7 +393,7 @@ test("keeps the execution value readable when Lody is unreachable", async () => 
       ),
     }),
   );
-  await expect.element(page.getByText(/Lody 暂不可达/)).toBeVisible();
+  await expect.element(page.getByText(/无法连接 Lody/)).toBeVisible();
   await page.getByText("修改执行设置").click();
   await expect.element(page.getByRole("textbox", { name: "Agent" })).toHaveValue("");
   await expect.element(page.getByText("agent-codex · gpt-6-sol · xhigh").first()).toBeVisible();

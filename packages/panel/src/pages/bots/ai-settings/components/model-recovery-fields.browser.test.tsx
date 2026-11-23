@@ -42,9 +42,7 @@ function Fields() {
 }
 test("fallback requires an explicit provider and catalog model", async () => {
   render(<Fields />);
-  await expect
-    .element(page.getByText("No fallback is configured.", { exact: false }))
-    .toBeVisible();
+  await expect.element(page.getByText("No fallback set.", { exact: false })).toBeVisible();
   await page.getByRole("checkbox", { name: "Use a fallback model" }).click();
   await expect.element(page.getByRole("alert")).toHaveTextContent("Choose an available provider");
   await page.getByRole("combobox", { name: "Fallback provider" }).click();
@@ -66,7 +64,7 @@ test("same primary pair is explained without silently selecting another model", 
   );
   await expect
     .element(page.getByRole("status"))
-    .toHaveTextContent("will not be used as a separate fallback");
+    .toHaveTextContent("won't act as a separate fallback");
 });
 test.each([1440, 390])(
   "a chat can explicitly disable fallback and return to global inheritance on %dpx",
