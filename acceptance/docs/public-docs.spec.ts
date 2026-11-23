@@ -176,6 +176,7 @@ test("the first search click opens the dialog when client scripts load late", as
     await page.goto("/docs/", { waitUntil: "commit" });
     await expect(page.locator("h1").first()).toBeVisible();
     await expect(search).toBeHidden();
+    await expect(page.getByRole("button", { name: "打开侧边栏", exact: true })).toBeHidden();
   } finally {
     resumeScripts();
   }
