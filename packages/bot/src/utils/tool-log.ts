@@ -1,45 +1,20 @@
 import type { RuntimeDiagnosticCode, RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
-import type { BotLogEntry } from "@cos-tool-bot/shared";
+import {
+  isDiagnosticCredentialKey,
+  redactDiagnosticText,
+  type BotLogEntry,
+} from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { asSchema } from "ai";
 import { getToolDescriptor } from "../tools/descriptors.js";
 
-const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
 const MAX_STRING_CHARS = 16_384;
 const MAX_SERIALIZED_CHARS = 64_000;
 const MAX_DEPTH = 12;
 
-function isSensitiveKey(key: string): boolean {
-  const normalized = key.replace(/[-_]/g, "").toLowerCase();
-  return (
-    [
-      "authorization",
-      "apikey",
-      "token",
-      "accesstoken",
-      "refreshtoken",
-      "bottoken",
-      "secret",
-      "clientsecret",
-      "password",
-      "cookie",
-      "setcookie",
-      "credential",
-    ].includes(normalized) ||
-    normalized.endsWith("apikey") ||
-    normalized.endsWith("authtoken") ||
-    normalized.endsWith("password") ||
-    normalized.endsWith("secret") ||
-    normalized.endsWith("credential")
-  );
-}
-
 function truncateString(value: string, secrets: readonly string[]): string {
   if (/^data:[^,]+;base64,/i.test(value)) return `[binary data URL: ${value.length} chars]`;
-  let redacted = value.replace(BEARER_VALUE, "Bearer [REDACTED]");
-  for (const secret of secrets) {
-    if (secret.length >= 4) redacted = redacted.split(secret).join("[REDACTED]");
-  }
+  const redacted = redactDiagnosticText(value, secrets);
   return redacted.length > MAX_STRING_CHARS
     ? `${redacted.slice(0, MAX_STRING_CHARS)}… [truncated ${redacted.length - MAX_STRING_CHARS} chars]`
     : redacted;
@@ -52,7 +27,7 @@ function normalizeToolLogValue(
   secrets: readonly string[],
   key?: string,
 ): unknown {
-  if (key && isSensitiveKey(key)) return "[REDACTED]";
+  if (key && isDiagnosticCredentialKey(key)) return "[REDACTED]";
   if (typeof value === "string") return truncateString(value, secrets);
   if (typeof value === "bigint") return `${value}n`;
   if (typeof value === "number") return Number.isFinite(value) ? value : String(value);

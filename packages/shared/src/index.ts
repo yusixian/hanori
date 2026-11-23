@@ -88,3 +88,5 @@ export * from "./scheduled-tasks.js";
 export * from "./prompt-versions.js";
 
 export * from "./quote.js";
+
+export { isDiagnosticCredentialKey, redactDiagnosticText } from "./diagnostic-credentials.js";
