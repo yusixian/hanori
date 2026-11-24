@@ -9,6 +9,8 @@ Hanori is a self-hosted Telegram AI companion built with [grammY](https://grammy
 
 ## Docker quickstart
 
+For the prebuilt installer and Coolify, 1Panel, and Dokploy templates, see the [self-hosting overview](packages/docs/content/docs/self-hosting/index.mdx#一键安装).
+
 From a fresh checkout, generate the instance secrets with a POSIX shell and OpenSSL. Replace the email and public HTTPS origin with your own. For a local trial, use `http://localhost:43100`.
 
 ```bash

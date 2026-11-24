@@ -7,10 +7,13 @@ const requiredEnvironment = {
   BETTER_AUTH_SECRET: "validation-secret-at-least-32-characters",
   BETTER_AUTH_URL: "https://bot.example.test",
   CODING_WORKER_SECRET: "validation-coding-worker-secret",
+  COOLIFY_PROXY_NETWORK: "validation-coolify",
   DB_PASSWORD: "validation-db-password",
   ENCRYPTION_KEY: "validation-encryption-key",
   GITHUB_APP_CLIENT_ID: "",
   HARNESS_LODY_BRIDGE_SECRET: "",
+  HANORI_DOMAIN: "bot.example.test",
+  HANORI_ROUTE_NAME: "hanori-validation",
   LODY_CLI_TOKEN: "",
   GITHUB_APP_CLIENT_SECRET: "",
   GITHUB_APP_ID: "",
@@ -357,4 +360,19 @@ assert(
 );
 validateMedia(renderConfig(["docker-compose.yml", "docker-compose.direct.yml"], "media"));
 
-process.stdout.write("Dokploy and legacy Compose contracts are valid.\n");
+const coolify = renderConfig(["examples/deploy/coolify/docker-compose.yml"]);
+assert(
+  coolify.services.app.labels?.["traefik.docker.network"] ===
+    coolify.networks["coolify-proxy"].name &&
+    coolify.services.app.labels?.[
+      "traefik.http.services.hanori-validation.loadbalancer.server.port"
+    ] === "3000",
+  "Coolify must route to app on its shared proxy network and container port",
+);
+const onePanel = renderConfig(["examples/deploy/1panel/docker-compose.yml"]);
+assert(
+  onePanel.services.app.ports?.[0]?.host_ip === "127.0.0.1",
+  "1Panel must expose app only on host loopback",
+);
+
+process.stdout.write("Dokploy, direct, Coolify and 1Panel Compose contracts are valid.\n");

@@ -1,0 +1,185 @@
+services:
+  app:
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori:${HANORI_IMAGE_TAG:-latest}
+    expose:
+      - "3000"
+    networks:
+      - default
+      - coolify-proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${COOLIFY_PROXY_NETWORK:-coolify}
+      - traefik.http.routers.${HANORI_ROUTE_NAME:?Set a unique HANORI_ROUTE_NAME}.rule=Host(`${HANORI_DOMAIN:?Set HANORI_DOMAIN}`)
+      - traefik.http.routers.${HANORI_ROUTE_NAME:?Set a unique HANORI_ROUTE_NAME}.entrypoints=https
+      - traefik.http.routers.${HANORI_ROUTE_NAME:?Set a unique HANORI_ROUTE_NAME}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${HANORI_ROUTE_NAME:?Set a unique HANORI_ROUTE_NAME}.service=${HANORI_ROUTE_NAME}
+      - traefik.http.services.${HANORI_ROUTE_NAME:?Set a unique HANORI_ROUTE_NAME}.loadbalancer.server.port=3000
+    environment:
+      - DATABASE_URL=postgresql://bot:${DB_PASSWORD:?Set DB_PASSWORD}@db:5432/cos_tool_bot
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:?Set BETTER_AUTH_URL}
+      - AUTH_OWNER_EMAIL=${AUTH_OWNER_EMAIL:?Set AUTH_OWNER_EMAIL}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY}
+      - PANEL_PASSWORD=${PANEL_PASSWORD:-}
+      - MINI_APP_SESSION_SECRET=${MINI_APP_SESSION_SECRET:-}
+      - BOT_TOKEN=${BOT_TOKEN:-}
+      - ADMIN_CHAT_IDS=${ADMIN_CHAT_IDS:-}
+      - BACKUP_DIR=/data/backups
+      - PLUGIN_DIRECTORY=/app/data/plugins
+      - QUOTE_WORKER_SOCKET=/quote-control/worker.sock
+    volumes:
+      - backups:/data/backups
+      - botdata:/app/data
+      - quotecontrol:/quote-control
+    depends_on:
+      quote-worker:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      db-backup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1024M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 15s
+
+  quote-worker:
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori-quote-worker:${HANORI_IMAGE_TAG:-latest}
+    environment:
+      - QUOTE_WORKER_SOCKET=/quote-control/worker.sock
+    volumes:
+      - quotecontrol:/quote-control
+    network_mode: none
+    read_only: true
+    user: "1000:1000"
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 512m
+    cpus: 1
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get({socketPath:'/quote-control/worker.sock',path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  db-backup:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    environment:
+      - PGPASSWORD=${DB_PASSWORD:?Set DB_PASSWORD}
+    volumes:
+      - backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        backup="/backups/cos_tool_bot_before_deploy_$$(date +%Y%m%d_%H%M%S).dump"
+        trap 'rm -f "$$backup"' EXIT
+        pg_dump -h db -U bot -d cos_tool_bot -Fc -f "$$backup"
+        test -s "$$backup"
+        pg_restore --list "$$backup" >/dev/null
+        trap - EXIT
+        printf 'Verified database backup: %s\n' "$$backup"
+    restart: "no"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  db:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    environment:
+      - POSTGRES_USER=bot
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD}
+      - POSTGRES_DB=cos_tool_bot
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d cos_tool_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 768M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=192MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "effective_cache_size=384MB"
+      - "-c"
+      - "max_connections=50"
+      - "-c"
+      - "log_min_duration_statement=1000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    shm_size: "192mb"
+
+volumes:
+  pgdata:
+  backups:
+  botdata:
+  quotecontrol:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1048576,uid=0,gid=1000,mode=0770"
+
+networks:
+  coolify-proxy:
+    external: true
+    name: ${COOLIFY_PROXY_NETWORK:-coolify}

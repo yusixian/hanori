@@ -76,6 +76,7 @@ origin=$(printf '%s\n' "$url" | awk '
 case $output in /*) ;; *) output=./$output ;; esac
 [ ! -e "$output" ] && [ ! -L "$output" ] || fail 'Output already exists.'
 template=$(dirname "$0")/../.env.example
+[ -f "$template" ] || template=${template%/*}/.env.selfhost.example
 # Link a complete private file into place. Concurrent initializers cannot overwrite it.
 suffix=$(openssl rand -hex 12)
 temp=${output%/*}/.init-env-$suffix

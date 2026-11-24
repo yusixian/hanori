@@ -5,7 +5,7 @@ description: 了解服务组成、前置条件和从开发到生产的部署路�
 
 Hanori 是 pnpm monorepo 应用，包含 Telegram Bot、Hono 服务端、React 管理面板、PostgreSQL 数据库和可选的编码 worker。生产环境由 Hono 统一托管 API 和静态面板，应用启动时自动执行数据库迁移。
 
-源码仓库目前为私有，自托管前需先向维护者获取源码或镜像及对应版本的部署授权。
+从 GitHub 获取对应版本的源码和部署模板。使用受访问控制的镜像时，先为部署服务器配置镜像仓库认证。
 
 ## 组件关系
 
@@ -31,10 +31,26 @@ Hanori 是 pnpm monorepo 应用，包含 Telegram Bot、Hono 服务端、React �
 ## 部署路径
 
 - **本地开发**：启动开发数据库、配好 `.env`，运行 `pnpm dev` 同时起 server 和 panel。
-- **Compose 生产**：准备 `.env`，构建启动 app 与数据库，等待迁移和健康检查通过。
-- **容器平台编排**：将 Compose 接入现有平台（如 Dokploy），保留健康检查、持久化卷与备份依赖。
+- **预构建镜像**：[一键安装脚本](#一键安装)下载 Compose 文件并生成私有 `.env`。也可按 [Docker 部署](/docs/self-hosting/docker)手动准备环境或从源码构建。
+- **容器平台编排**：按 [Coolify](https://github.com/yusixian/hanori/tree/main/examples/deploy/coolify)、[1Panel](https://github.com/yusixian/hanori/tree/main/examples/deploy/1panel) 或 [Dokploy](https://github.com/yusixian/hanori/tree/main/examples/deploy/dokploy) 的部署示例接入 HTTPS，保留健康检查、持久化卷与备份依赖。
 
 切勿把开发库、真实 Bot Token 或生产 `.env` 交给浏览器测试和验收脚本；Mini App 权限流程需在真实 Telegram WebView 中验证。
+
+## 一键安装
+
+准备 POSIX Shell、curl 和 OpenSSL。启动服务需要 Docker Engine 和 Compose 插件。以下命令使用预构建镜像，将安装文件放入 `./hanori`：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yusixian/hanori/main/scripts/install.sh -o install.sh &&
+  sh install.sh --email owner@example.com --url https://bot.example.com --tag v0.29.1-rc.1
+cd hanori
+docker compose -f docker-compose.prebuilt.yml up -d
+curl -fsS http://127.0.0.1:43100/api/health/ready
+```
+
+示例使用已发布的候选镜像 `v0.29.1-rc.1`。安装其他版本时，将 `--tag` 换成 GHCR 上已发布的镜像标签。将邮箱和 HTTPS origin 换成自己的值。本机试用可省略 `--url`，默认使用 `http://localhost:43100`；默认端口在宿主机发布，试用时请用本机防火墙限制外部访问。用 `--dir` 指定其他目录，或同时设置 `--ref` 和 `--tag` 来使用与预构建镜像对应的 Git 标签及镜像标签；从已有源码目录安装可用 `--source-dir`。
+
+脚本以 `0600` 权限生成 `.env`，保留已有文件。首次登录密码见本机 `.env` 中的 `PANEL_PASSWORD`，登录并修改密码后可从环境中移除。
 
 ## 推荐顺序
 
