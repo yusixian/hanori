@@ -5,7 +5,7 @@ description: 用 Docker Compose 启动服务、执行健康检查并安全更新
 
 ## 使用 GHCR 预构建镜像
 
-从已发布镜像对应的 Git 标签下载仓库根目录的 `docker-compose.prebuilt.yml` 和 `.env.example`，放在同一目录。参考第 1 节准备环境，按第 2 节的方式 A 创建 `.env`。如需内置图片分类，将 `nsfw` 加入 `COMPOSE_PROFILES`，并设置 `NSFW_API_URL=http://nsfw-api:3000`。
+从已发布镜像对应的 Git 标签下载仓库根目录的 `docker-compose.prebuilt.yml` 和 `.env.selfhost.example`，放在同一目录。参考第 1 节准备环境，按第 2 节的方式 A 创建 `.env`。如需内置图片分类，将 `nsfw` 加入 `COMPOSE_PROFILES`，并设置 `NSFW_API_URL=http://nsfw-api:3000`。
 
 将 `HANORI_IMAGE_TAG` 设为完整版本标签（含 `v`），也可使用默认值 `latest`。使用其他镜像仓库时，将 `HANORI_IMAGE_REGISTRY` 设为含命名空间的地址，默认值为 `ghcr.io/yusixian`。
 
@@ -44,7 +44,7 @@ openssl rand -hex 32
 **方式 A：手动复制模板**
 
 ```bash
-cp .env.example .env
+cp .env.selfhost.example .env
 chmod 600 .env
 ```
 
@@ -59,6 +59,14 @@ chmod 600 .env
 替换为自己的邮箱和 HTTPS origin（本机试用可填 `http://localhost:43100`）。脚本会自动生成上述密钥并以 `0600` 权限写入（终端不回显，首次登录密码见 `.env` 中的 `PANEL_PASSWORD`），`DATABASE_URL` 留空以防误连开发库。
 
 无论哪种方式，所有环境都必须填非空 `ENCRYPTION_KEY`；升级或恢复已有数据时保留原值，切勿将 `.env` 提交进版本库或镜像。
+
+填写 `DB_PASSWORD`、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL`、`AUTH_OWNER_EMAIL`、`ENCRYPTION_KEY` 和首次启动用的 `PANEL_PASSWORD`。部署前运行配置自检：
+
+```bash
+node scripts/check-env.mjs
+```
+
+也可运行 `pnpm deploy:env:check`，用 `--file <path>` 指定其他环境文件。命令逐项列出需要修复的配置，并用退出码 `1` 标记错误。文件中的 `PANEL_PASSWORD` 会触发首次登录后的清理提醒，单独出现该提醒时退出码为 `0`。
 
 ## 3. 启动最小服务
 

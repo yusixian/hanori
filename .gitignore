@@ -11,6 +11,7 @@ deployment-version
 .env
 .env.*
 !.env.example
+!.env.selfhost.example
 .env.local
 .env.*.local
 

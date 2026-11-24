@@ -52,7 +52,7 @@ cd cos-tool-bot
 先复制模板：
 
 ```bash
-cp .env.example .env
+cp .env.selfhost.example .env
 chmod 600 .env
 ```
 
@@ -84,15 +84,12 @@ PORT=43100
 
 # 登录配置
 BETTER_AUTH_SECRET=生成的BETTER_AUTH_SECRET
-BETTER_AUTH_URL=http://服务器公网IP:43100
+BETTER_AUTH_URL=https://bot.example.com
 AUTH_OWNER_EMAIL=你的登录邮箱
 PANEL_PASSWORD=生成的PANEL_PASSWORD
 
 # 敏感配置加密密钥：部署后不要修改
 ENCRYPTION_KEY=生成的ENCRYPTION_KEY
-
-# Docker 内部的 NSFW 服务地址
-NSFW_API_URL=http://nsfw-api:3000
 
 # 暂时不用的配置可以保持为空
 BOT_TOKEN=
@@ -114,10 +111,12 @@ CODING_WORKER_SECRET=
 
 - 四个生成值要填写到对应的同名配置中，不要互换。
 - 已经保存数据后，不要修改 `DB_PASSWORD` 或 `ENCRYPTION_KEY`。
-- `http://服务器公网IP:43100` 只适合临时测试，并且要把“服务器公网 IP”替换成真实 IP。长期使用应配置域名和 HTTPS，把 `BETTER_AUTH_URL` 改为真实地址，例如 `https://bot.example.com`，不能带结尾 `/`。
+- 公网部署使用自己的 HTTPS origin。本机试用可使用 `http://localhost:43100`，端口须与 `PORT` 一致。
 - `.env` 包含密码，不能发到群聊、不能提交到 Git。
 
 在 nano 中按 `Ctrl+O`、回车保存，再按 `Ctrl+X` 退出。
+
+配置好必填项和需要的可选集成后，启动前运行 `node scripts/check-env.mjs` 或 `pnpm deploy:env:check`。根据输出修复错误，首次登录成功后删除 `PANEL_PASSWORD`。
 
 #### 可选：启用 GitHub 管理面板授权
 

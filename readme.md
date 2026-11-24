@@ -13,9 +13,12 @@
 
 ```bash
 ./scripts/init-env.sh --email owner@example.com --url https://bot.example.com
+node scripts/check-env.mjs
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
 curl -fsS http://localhost:43100/api/health/ready
 ```
+
+手动配置可从 [.env.selfhost.example](.env.selfhost.example) 开始，再运行 `pnpm deploy:env:check`。已有实例继续使用原来的环境文件、加密密钥、Compose 项目名和数据卷。
 
 本地试跑可以把 `--url` 改成 `http://localhost:43100`。后续更新直接跑 `./scripts/update-production.sh`（自动备份、重建并做健康检查）；如果自定义过 Compose 项目名，记得先设置 `DEPLOY_PROJECT_NAME`。
 
