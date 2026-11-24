@@ -65,7 +65,7 @@ See [.env.example](.env.example) and the [configuration guide](packages/docs/con
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`                                                                       | Optional Google OAuth credentials.                                                                                              |
 | `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_SLUG` | Set all five for a GitHub App, or leave all five empty. Store the PEM as one line with literal `\n` separators.                 |
 
-To enable the Pi coding worker, configure `CODING_WORKER_SECRET` and set `COMPOSE_PROFILES=coding` (or `dokploy,coding` on Dokploy). The optional Dev Harness connects Telegram topics to pull requests. See [the harness example](harness.example.yaml) for the configuration path, webhook secret, and Lody bridge settings.
+To enable the Pi coding worker, configure `CODING_WORKER_SECRET` and set `COMPOSE_PROFILES=coding` (or `dokploy,coding` on Dokploy). The optional Dev Harness connects Telegram topics to pull requests. Set its configuration path with `HARNESS_CONFIG_PATH` and webhook secret with `HARNESS_GITHUB_WEBHOOK_SECRET`. The Lody bridge uses `HARNESS_LODY_BRIDGE_URL`, `HARNESS_LODY_BRIDGE_SECRET`, and a bridge-only `LODY_CLI_TOKEN`. See [the harness example](harness.example.yaml).
 
 ## Contributing and security
 
