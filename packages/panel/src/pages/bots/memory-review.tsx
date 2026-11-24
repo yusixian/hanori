@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { client } from "@/lib/client";
 import type { ChatSummaryRecord } from "@cos-tool-bot/shared";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GovernanceSubjectPicker } from "./governance-subject-picker";
 
@@ -12,6 +12,7 @@ const reviewErrors: Record<string, string> = {
   "Memory review already running": "busy",
   "Memory consolidation quota exhausted": "quota",
   "Configured consolidation provider unavailable": "provider",
+  "Consolidation model request timed out": "timeout",
   "Consolidation model request failed": "model",
 };
 
@@ -29,13 +30,18 @@ export function MemoryReview({
 }) {
   const { t, i18n } = useTranslation("aiSettings");
   const id = useId();
-  const [chatId, setChatId] = useState(summary ? String(summary.chatId) : "");
+  const nextKey = useRef(1);
+  const [groups, setGroups] = useState([{ key: 0, chatId: summary ? String(summary.chatId) : "" }]);
   const [start, setStart] = useState(() => localDateTime(Date.now() - 7 * 86_400_000));
   const [end, setEnd] = useState(() => localDateTime(Date.now()));
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [failed, setFailed] = useState(false);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [results, setResults] = useState<
+    Record<string, { message: string; failed: boolean; cursor: number | null }>
+  >({});
+  const pending = groups.filter(
+    ({ chatId }) => !results[chatId] || results[chatId].failed || results[chatId].cursor !== null,
+  );
+  const more = groups.some(({ chatId }) => results[chatId]?.cursor != null);
   const [statusVersion, setStatusVersion] = useState(0);
   const [lastRun, setLastRun] = useState("");
   const [lastError, setLastError] = useState("");
@@ -61,7 +67,11 @@ export function MemoryReview({
               })
             : t("review.noRuns"),
         );
-        setLastError(run?.error ?? "");
+        setLastError(
+          run?.error && reviewErrors[run.error]
+            ? t(`review.errors.${reviewErrors[run.error]}`)
+            : (run?.error ?? ""),
+        );
       } catch {
         if (!controller.signal.aborted) setLastError(t("review.statusFailed"));
       }
@@ -97,40 +107,57 @@ export function MemoryReview({
   );
 
   function resetProgress() {
-    setCursor(null);
-    setMessage("");
-    setFailed(false);
+    setResults({});
+  }
+
+  function changeGroup(key: number, chatId: string) {
+    setGroups(groups.map((group) => (group.key === key ? { key, chatId } : group)));
   }
 
   async function run() {
     setBusy(true);
-    setMessage("");
-    setFailed(false);
+    const targets = pending.length ? pending : groups;
+    if (!pending.length) resetProgress();
     try {
-      const res = await client.api.bots[":botId"].memory.review.$post({
-        param: { botId },
-        json: {
-          chatId,
-          start: summary?.windowStart ?? new Date(start).toISOString(),
-          end: summary?.windowEnd ?? new Date(end).toISOString(),
-          ...(cursor === null ? {} : { afterMessageId: cursor }),
-        },
-      });
-      const body = await res.json();
-      if (!body.ok) {
-        const translation = reviewErrors[body.error];
-        const reason = translation ? t(`review.errors.${translation}`) : body.error;
-        throw new Error(reason);
+      for (const { chatId } of targets) {
+        const cursor = results[chatId]?.cursor ?? null;
+        try {
+          const res = await client.api.bots[":botId"].memory.review.$post({
+            param: { botId },
+            json: {
+              chatId,
+              start: summary?.windowStart ?? new Date(start).toISOString(),
+              end: summary?.windowEnd ?? new Date(end).toISOString(),
+              ...(cursor === null ? {} : { afterMessageId: cursor }),
+            },
+          });
+          const body = await res.json();
+          if (!body.ok) {
+            const translation = reviewErrors[body.error];
+            const reason = translation ? t(`review.errors.${translation}`) : body.error;
+            throw new Error(reason);
+          }
+          setResults((prev) => ({
+            ...prev,
+            [chatId]: {
+              message: t("review.result", body.data),
+              cursor: body.data.nextAfterMessageId,
+              failed: false,
+            },
+          }));
+        } catch (error) {
+          setResults((prev) => ({
+            ...prev,
+            [chatId]: {
+              message: t("review.failed", {
+                reason: error instanceof Error ? error.message : t("common:common.unknown"),
+              }),
+              failed: true,
+              cursor,
+            },
+          }));
+        }
       }
-      setMessage(t("review.result", body.data));
-      setCursor(body.data.nextAfterMessageId);
-    } catch (error) {
-      setFailed(true);
-      setMessage(
-        t("review.failed", {
-          reason: error instanceof Error ? error.message : t("common:common.unknown"),
-        }),
-      );
     } finally {
       setBusy(false);
       setStatusVersion((value) => value + 1);
@@ -163,34 +190,56 @@ export function MemoryReview({
             </p>
           )}
           <fieldset disabled={busy} className="space-y-3">
-            <GovernanceSubjectPicker
-              label={t("review.group")}
-              value={chatId}
-              onValueChange={(value) => {
-                setChatId(value);
-                resetProgress();
-              }}
-              loadOptions={loadGroups}
-              resolveOption={resolveGroup}
-              placeholder={t("bots:form.cosInside.selectGroup")}
-              searchPlaceholder={t("review.searchGroup")}
-              emptyText={t("bots:form.cosInside.noGroups")}
-              unknownText={(value) => value}
-              loadErrorText={t("bots:form.cosInside.loadGroupsFailed")}
-            />
-            <details className="text-xs">
-              <summary className="cursor-pointer">{t("bots:form.cosInside.manualEntry")}</summary>
-              <Input
-                aria-label={t("review.groupId")}
-                className="mt-1"
-                value={chatId}
-                placeholder="-1001234567890"
-                onChange={(event) => {
-                  setChatId(event.target.value);
-                  resetProgress();
-                }}
-              />
-            </details>
+            {groups.map(({ key, chatId }) => (
+              <div key={key} className="space-y-2">
+                <GovernanceSubjectPicker
+                  label={t("review.group")}
+                  value={chatId}
+                  onValueChange={(value) => {
+                    changeGroup(key, value);
+                  }}
+                  loadOptions={loadGroups}
+                  resolveOption={resolveGroup}
+                  placeholder={t("bots:form.cosInside.selectGroup")}
+                  searchPlaceholder={t("review.searchGroup")}
+                  emptyText={t("bots:form.cosInside.noGroups")}
+                  unknownText={(value) => value}
+                  loadErrorText={t("bots:form.cosInside.loadGroupsFailed")}
+                />
+                <details className="text-xs">
+                  <summary className="cursor-pointer">
+                    {t("bots:form.cosInside.manualEntry")}
+                  </summary>
+                  <Input
+                    aria-label={t("review.groupId")}
+                    className="mt-1"
+                    value={chatId}
+                    placeholder="-1001234567890"
+                    onChange={(event) => {
+                      changeGroup(key, event.target.value);
+                    }}
+                  />
+                </details>
+                {groups.length > 1 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setGroups(groups.filter((group) => group.key !== key))}
+                  >
+                    {t("review.removeGroup")}
+                  </Button>
+                )}
+              </div>
+            ))}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setGroups([...groups, { key: nextKey.current++, chatId: "" }])}
+            >
+              {t("review.addGroup")}
+            </Button>
             <div className="grid gap-3 sm:grid-cols-2">
               <label htmlFor={id + "-start"} className="space-y-1 text-sm">
                 {t("review.start")}
@@ -234,31 +283,38 @@ export function MemoryReview({
         variant="outline"
         disabled={
           busy ||
-          !/^-[1-9]\d*$/.test(chatId) ||
-          !Number.isSafeInteger(Number(chatId)) ||
+          groups.some(
+            ({ chatId }) => !/^-[1-9]\d*$/.test(chatId) || !Number.isSafeInteger(Number(chatId)),
+          ) ||
+          new Set(groups.map((group) => group.chatId)).size !== groups.length ||
           !datesValid
         }
         onClick={() => void run()}
       >
         {busy
           ? t("review.running")
-          : cursor !== null
+          : more
             ? t("review.continue")
             : summary
               ? t("review.fromSummary")
               : t("review.run")}
       </Button>
-      {message && (
-        <p
-          role={failed ? "alert" : "status"}
-          className={failed ? "text-destructive text-sm" : "text-sm"}
-        >
-          {message}
-        </p>
-      )}
-      {cursor !== null && !busy && (
-        <p className="text-muted-foreground text-xs">{t("review.remaining")}</p>
-      )}
+      {groups.map(({ key, chatId }) => {
+        const result = results[chatId];
+        return (
+          result && (
+            <p
+              key={key}
+              role={result.failed ? "alert" : "status"}
+              className={result.failed ? "text-destructive text-sm" : "text-sm"}
+            >
+              {groups.length > 1 && <strong>{chatId} · </strong>}
+              {result.message}
+            </p>
+          )
+        );
+      })}
+      {more && !busy && <p className="text-muted-foreground text-xs">{t("review.remaining")}</p>}
     </section>
   );
 }

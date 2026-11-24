@@ -96,6 +96,10 @@ test("shows the 12-hour default, dedicated provider, and last run usage on deskt
   await expect
     .element(page.getByText(/3 model calls · 2 memory changes · 420 input/))
     .toBeVisible();
+  const timeout = page.getByRole("spinbutton", { name: "Review model timeout (seconds)" });
+  await expect.element(timeout).toHaveValue(120);
+  await timeout.fill("240");
+  await expect.element(timeout).toHaveValue(240);
   await page.getByRole("combobox", { name: "Review provider" }).click();
   await page.getByRole("option", { name: "Budget provider" }).click();
   await expect
@@ -107,12 +111,13 @@ test("shows the 12-hour default, dedicated provider, and last run usage on deskt
 });
 
 test("selects a group and reviews the last seven days using original chat messages", async () => {
-  const bodies: Array<{ chatId: string; start: string; end: string }> = [];
+  const bodies: Array<{ chatId: string; start: string; end: string; afterMessageId?: number }> = [];
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
     if (String(url).includes("/conversations"))
       return Response.json({
         ok: true,
         data: [
+          { chatType: "group", chatId: -1002, userNames: ["Second"] },
           { chatType: "private", chatId: 123, userNames: ["Private"] },
           { chatType: "group", chatId: -1001, userNames: ["Alex", "Sam"] },
         ],
@@ -121,16 +126,33 @@ test("selects a group and reviews the last seven days using original chat messag
     bodies.push(JSON.parse(String(init.body)));
     return Response.json({
       ok: true,
-      data: { calls: 0, changes: 0, inputTokens: 0, outputTokens: 0, nextAfterMessageId: null },
+      data: {
+        calls: 0,
+        changes: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        nextAfterMessageId: bodies.length === 1 ? 9 : null,
+      },
     });
   });
   render(<MemoryReview botId="test-bot" />);
   await page.getByRole("combobox", { name: "Group to review" }).click();
   await expect.element(page.getByRole("option", { name: /Private/ })).not.toBeInTheDocument();
   await page.getByRole("option", { name: /Alex, Sam/ }).click();
+  await page.getByRole("button", { name: "Add group" }).click();
+  await page.getByRole("combobox", { name: "Group to review" }).nth(1).click();
+  await page.getByRole("option", { name: /Second/ }).click();
   await page.getByRole("button", { name: "Review messages", exact: true }).click();
-  await expect.element(page.getByRole("status")).toHaveTextContent("0 model calls");
-  expect(bodies).toHaveLength(1);
+  await expect.element(page.getByRole("status").nth(1)).toHaveTextContent("0 model calls");
+  await page.getByRole("button", { name: "Review next batch" }).click();
+  await expect
+    .element(page.getByRole("button", { name: "Review messages", exact: true }))
+    .toBeEnabled();
+  expect(bodies.map((b) => [b.chatId, b.afterMessageId])).toEqual([
+    ["-1001", undefined],
+    ["-1002", undefined],
+    ["-1001", 9],
+  ]);
   expect(bodies[0]?.chatId).toBe("-1001");
   expect(Date.parse(bodies[0]!.end) - Date.parse(bodies[0]!.start)).toBe(7 * 86_400_000);
 });
