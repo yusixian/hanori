@@ -107,7 +107,7 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
 
 for (const { version, theme, status = "" } of [
   { version: "v0.28.1", theme: "语录父预览与布局" },
-  { version: "v0.29.1", theme: "生图确认修复（未发布候选）", status: "未发布候选" },
+  { version: "v0.29.1", theme: "群友印象回顾与生图确认修复（未发布候选）", status: "未发布候选" },
   { version: "v0.29.0", theme: "模型重试与备用模型" },
   { version: "v0.28.0", theme: "语录贴纸与配色" },
   { version: "v0.27.1", theme: "Telegram 内容接收补漏" },

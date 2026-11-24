@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AiConfigStored } from "@cos-tool-bot/shared";
+import type { AiConfigRuntime } from "./ai-config-runtime.js";
 import { countTokens } from "gpt-tokenizer";
 import {
   assertShownMemoryTarget,
@@ -8,6 +9,7 @@ import {
   eligible,
   fitConsolidationBatch,
   parseMemoryProposals,
+  resolveConsolidationModel,
   selectStableConsolidationBatch,
 } from "./memory-consolidator.js";
 
@@ -64,6 +66,36 @@ describe("consolidation proposal validation", () => {
     expect(() => parseMemoryProposals(proposal({ kind: "fact" }), groupSources)).toThrow(
       "Group profile inference denied",
     );
+  });
+
+  it("requires eligible evidence and the group author's own words for personal impressions", () => {
+    const source = { ...groupSources[0]!, userAuthoredContent: "I climb every week" };
+    const base = {
+      kind: "preference",
+      sourceMessageIds: [source.id],
+      participantIds: [source.userId],
+      selfQuote: source.userAuthoredContent,
+    };
+    expect(parseMemoryProposals(proposal(base), [source], new Set([source.id]))[0]?.kind).toBe(
+      "preference",
+    );
+    expect(() => parseMemoryProposals(proposal(base), [source])).toThrow(
+      "Group profile inference denied",
+    );
+    expect(() =>
+      parseMemoryProposals(
+        proposal({ ...base, selfQuote: "I prefer hiking" }),
+        [source],
+        new Set([source.id]),
+      ),
+    ).toThrow("Group profile inference denied");
+    expect(
+      consolidationSourceScope([source], [source.userId], "normal", "preference"),
+    ).toMatchObject({
+      telegramId: source.userId,
+      scopeChatId: null,
+      sourceChatId: source.chatId,
+    });
   });
 
   it("rejects invented participants and source messages", () => {
@@ -255,5 +287,30 @@ describe("shown target snapshot", () => {
         updatedAt: new Date("2026-01-01T00:01:00Z"),
       }),
     ).toThrow("target changed");
+  });
+});
+
+describe("memory consolidation model selection", () => {
+  const chat = { id: "chat", defaultModel: "large" };
+  const cheap = { id: "budget", defaultModel: "small", models: [{ id: "economy" }] };
+  const runtime = {
+    providers: [chat, cheap],
+    activeProvider: chat,
+    config: { activeProviderId: "chat", activeModelId: "selected" },
+  } as AiConfigRuntime;
+  function select(providerId?: string, modelId?: string) {
+    return resolveConsolidationModel(
+      { botMemoryConfig: { consolidation: { providerId, modelId } } } as AiConfigStored,
+      runtime,
+    );
+  }
+  it("follows the chat model by default and supports a provider default or an explicit model", () => {
+    expect(select()).toEqual({ provider: chat, modelId: "selected" });
+    expect(select("budget")).toEqual({ provider: cheap, modelId: "small" });
+    expect(select("budget", "economy")).toEqual({ provider: cheap, modelId: "economy" });
+  });
+  it("fails closed for a missing provider or model", () => {
+    expect(() => select("missing")).toThrow("provider unavailable");
+    expect(() => select("budget", "gone")).toThrow("model unavailable");
   });
 });

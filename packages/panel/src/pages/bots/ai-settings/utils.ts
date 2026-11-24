@@ -74,6 +74,8 @@ export function renameProviderModelReferences({
   nextId: string;
 }) {
   const usesActiveProvider = config.activeProviderId === providerId;
+  const consolidation = config.botMemoryConfig?.consolidation;
+  const reviewUsesProvider = consolidation?.providerId === providerId;
   const githubUsesProvider =
     config.githubToolsConfig?.codingProviderId === providerId ||
     (!config.githubToolsConfig?.codingProviderId && usesActiveProvider);
@@ -114,6 +116,10 @@ export function renameProviderModelReferences({
           },
         ]),
       ),
+      botMemoryConfig:
+        config.botMemoryConfig && consolidation?.modelId === currentId && reviewUsesProvider
+          ? { ...config.botMemoryConfig, consolidation: { ...consolidation, modelId: nextId } }
+          : config.botMemoryConfig,
       githubToolsConfig:
         config.githubToolsConfig?.codingModelId === currentId && githubUsesProvider
           ? { ...config.githubToolsConfig, codingModelId: nextId }

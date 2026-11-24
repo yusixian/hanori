@@ -1,3 +1,4 @@
+import { useCanManageBot } from "@/hooks/use-can-manage-bot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +22,7 @@ import {
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { SummaryPreview } from "./summary-preview";
+import { MemoryReview } from "./memory-review";
 import { SummaryConfigForm } from "./summary-config-form";
 import { useTranslation } from "react-i18next";
 
@@ -37,6 +39,7 @@ function HistoryDetailModal({
 }) {
   const { t, i18n } = useTranslation("bots");
 
+  const canManage = useCanManageBot();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useLayoutEffect(() => {
@@ -112,6 +115,9 @@ function HistoryDetailModal({
           <div className="text-foreground max-w-prose text-sm leading-7 [overflow-wrap:anywhere] whitespace-pre-wrap">
             {record.content}
           </div>
+        )}
+        {canManage && record.chatId < 0 && !record.errorMessage && (
+          <MemoryReview botId={record.botId} summary={record} />
         )}
       </div>
     </dialog>

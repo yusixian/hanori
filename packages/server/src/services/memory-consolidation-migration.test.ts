@@ -17,6 +17,10 @@ it.skipIf(!databaseUrl)(
       resolve(import.meta.dirname, "../../../database/drizzle/0053_classy_mattie_franklin.sql"),
       "utf8",
     );
+    const reviewMigration = await readFile(
+      resolve(import.meta.dirname, "../../../database/drizzle/0076_memory_review.sql"),
+      "utf8",
+    );
     const { client } = createDb(databaseUrl!);
     const rollback = new Error("rollback migration test");
     const botId = "00000000-0000-0000-0000-000000000001";
@@ -55,6 +59,23 @@ it.skipIf(!databaseUrl)(
           ('${botId}', -100, 'ignore', NULL, ARRAY[101], ARRAY[41]::bigint[]),
           ('${botId}', 41, 'add', 2, ARRAY[102], ARRAY[41]::bigint[])
         `);
+
+          await tx.unsafe(
+            `INSERT INTO memory_consolidation_state (bot_id, cursor_message_id) VALUES ('${botId}', 101)`,
+          );
+          for (const statement of reviewMigration.split("--> statement-breakpoint")) {
+            if (statement.trim()) await tx.unsafe(statement);
+          }
+          expect(
+            await tx.unsafe(
+              "SELECT cursor_message_id, last_scheduled_at, last_run, group_impressions_since = timezone('UTC', now()) AS starts_now FROM memory_consolidation_state",
+            ),
+          ).toEqual([
+            { cursor_message_id: 101, last_scheduled_at: null, last_run: null, starts_now: true },
+          ]);
+          expect(
+            await tx.unsafe("SELECT DISTINCT review_version FROM memory_consolidation_evidence"),
+          ).toEqual([{ review_version: 1 }]);
 
           // Ordinary 30-day raw-history cleanup must preserve the long-term record.
           await tx.unsafe("DELETE FROM conversation_messages WHERE id = 101");

@@ -1,5 +1,6 @@
 import {
   DEFAULT_AI_EXECUTION_CONFIG,
+  DEFAULT_BOT_MEMORY_CONFIG,
   type AiConfigPublic,
   type ImageOcrConfig,
   type SummaryConfigStored,
@@ -55,6 +56,10 @@ function config(activeProviderId = "provider-a"): AiConfigPublic {
       randomReplyCooldown: 60,
     },
     executionConfig: DEFAULT_AI_EXECUTION_CONFIG,
+    botMemoryConfig: {
+      ...DEFAULT_BOT_MEMORY_CONFIG,
+      consolidation: { providerId: "provider-a", modelId: "old-model" },
+    },
     groupOverrides: {},
     githubToolsConfig: {
       enabled: true,
@@ -96,6 +101,7 @@ test("renames the provider model, default, and explicitly owned references", () 
   });
   expect(renamed.config.providers[1]?.defaultModel).toBe("old-model");
   expect(renamed.config.githubToolsConfig?.codingModelId).toBe("new-model");
+  expect(renamed.config.botMemoryConfig?.consolidation?.modelId).toBe("new-model");
   expect(renamed.config.agentToolsConfig?.subAgentModel).toBe("new-model");
   expect(renamed.summaryConfig.modelId).toBe("new-model");
   expect(renamed.imageOcrConfig.modelId).toBe("new-model");

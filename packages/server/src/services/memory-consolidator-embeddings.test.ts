@@ -85,6 +85,7 @@ const proposals = [
 type Query = {
   op: "select" | "insert" | "update";
   inTransaction: boolean;
+  columns?: string[];
   table?: unknown;
   values?: Record<string, unknown>;
   set?: Record<string, unknown>;
@@ -100,19 +101,23 @@ function consolidationDb(transactionSource: typeof source, aiConfig: Record<stri
   const releaseLease = vi.fn(async () => {});
   const beforeTransaction = vi.fn(async () => {});
   const lease = { botId, cursorMessageId: 0, leaseOwner: "owner", leaseUntil: new Date(8e15) };
+  let lastRead = false;
   const rows = (query: Query): unknown[] => {
     if (query.table === bots) {
       return [{ id: botId, isActive: true, aiConfig }];
     }
     if (query.table === memoryConsolidationState) return query.op === "update" ? [] : [lease];
     if (query.table === conversationMessages) {
-      return [query.inTransaction ? transactionSource : source];
+      if (query.inTransaction) return [transactionSource];
+      if (lastRead) return [];
+      lastRead = true;
+      return [source];
     }
     if (query.table === userPrivacySettings) return [];
     if (query.table === botMemories) {
       if (query.op === "insert") return [memoryRow(8, query.values?.["content"])];
       if (query.op === "update") return [memoryRow(7, query.set?.["content"])];
-      return [{ ...shown }];
+      return query.columns?.includes("lastEvidenceAt") ? [] : [{ ...shown }];
     }
     return [];
   };
@@ -155,7 +160,8 @@ function consolidationDb(transactionSource: typeof source, aiConfig: Record<stri
     return chain;
   };
   const executor = (inTransaction: boolean) => ({
-    select: () => builder({ op: "select", inTransaction }),
+    select: (columns?: Record<string, unknown>) =>
+      builder({ op: "select", inTransaction, columns: columns && Object.keys(columns) }),
     insert: (table: unknown) => builder({ op: "insert", inTransaction, table }),
     update: (table: unknown) => builder({ op: "update", inTransaction, table }),
     execute: async () => [],
