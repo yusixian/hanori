@@ -273,6 +273,19 @@ export class CodingWorkerClient {
     throw new Error("Pi coding worker URL must use http: or https:");
   }
 
+  private async readHealth(signal: AbortSignal) {
+    const challenge = randomBytes(32).toString("base64url");
+    const response = await this.request(`/health?challenge=${challenge}`, { signal });
+    const payload: unknown = await response.json().catch(() => null);
+    return response.ok && hasValidHealthProof(payload, this.options.secret, challenge)
+      ? payload
+      : null;
+  }
+
+  async available(signal: AbortSignal) {
+    return Boolean(await this.readHealth(signal));
+  }
+
   private async waitForHealthyWorker(
     differentFrom?: string,
     signal?: AbortSignal,
@@ -283,19 +296,11 @@ export class CodingWorkerClient {
     while (Date.now() <= deadline) {
       signal?.throwIfAborted();
       try {
-        const challenge = randomBytes(32).toString("base64url");
         const healthTimeout = AbortSignal.timeout(Math.min(5_000, timeoutMs));
-        const response = await this.request(`/health?challenge=${challenge}`, {
-          signal: signal ? AbortSignal.any([signal, healthTimeout]) : healthTimeout,
-        });
-        const payload: unknown = await response.json().catch(() => null);
-        if (
-          response.ok &&
-          hasValidHealthProof(payload, this.options.secret, challenge) &&
-          payload.bootId !== differentFrom
-        ) {
-          return payload;
-        }
+        const payload = await this.readHealth(
+          signal ? AbortSignal.any([signal, healthTimeout]) : healthTimeout,
+        );
+        if (payload && payload.bootId !== differentFrom) return payload;
       } catch (error) {
         if (signal?.aborted) signal.throwIfAborted();
         lastError = error;

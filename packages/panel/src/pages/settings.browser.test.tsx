@@ -86,12 +86,18 @@ test("limits settings content and list requests to the current membership role",
     .element(page.getByRole("heading", { name: "A space to share" }))
     .not.toBeInTheDocument();
   await expect.element(page.getByRole("heading", { name: "Organization" })).not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("link", { name: "System diagnostics & health" }))
+    .not.toBeInTheDocument();
   expect(mocks.fetch.mock.calls.map(([path]) => path)).toEqual(["/api/authz/me"]);
 });
 
 test("keeps admin membership options and owner-only reset controls distinct", async () => {
   role = "admin";
   await render(<SettingsPage />);
+  await expect
+    .element(page.getByRole("link", { name: "System diagnostics & health" }))
+    .toHaveAttribute("href", "/settings/diagnostics");
   await expect.element(page.getByText("Test Editor", { exact: true })).toBeVisible();
   await expect
     .element(page.getByRole("button", { name: "Reset password" }))

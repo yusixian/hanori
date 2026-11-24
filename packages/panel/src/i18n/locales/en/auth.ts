@@ -1,4 +1,54 @@
 export const auth = {
+  diagnostics: {
+    unknown: "Unknown",
+    title: "System diagnostics & health",
+    healthy: "Healthy",
+    warning: "Warning",
+    disabled: "Disabled",
+    unavailable: "Unavailable",
+    refresh: "Refresh",
+    loading: "Checking system health…",
+    forbidden: "Only workspace owners and administrators can view diagnostics.",
+    failed: "Could not load diagnostics. Check the server connection and refresh.",
+    deployment: "Deployment",
+    version: "Deployment commit",
+    versionFix: "Set APP_VERSION to the full 40-character Git commit SHA and restart the app.",
+    runtime: "Runtime",
+    runtimeFix: "Check the startup or shutdown logs, then refresh after the server is ready.",
+    development: "Development",
+    production: "Production",
+    test: "Test",
+    starting: "Starting",
+    stopping: "Stopping",
+    ready: "Ready",
+    database: "Database connection",
+    databaseFix: "Check PostgreSQL health and the app’s database connection settings.",
+    migrations: "Startup migrations",
+    migrationsFix: "Review the migration error in the startup log before restarting.",
+    security: "Authentication & Mini App",
+    protocol: "Public origin and request protocol",
+    protocolDetail: "{{origin}} · Request {{request}} · X-Forwarded-Proto {{forwarded}}",
+    absent: "absent",
+    protocolFix:
+      "Set BETTER_AUTH_URL to the public origin and configure the reverse proxy to overwrite X-Forwarded-Proto with the public request scheme.",
+    password: "Bootstrap password configuration",
+    passwordFix:
+      "After the first owner login, remove PANEL_PASSWORD from the deployment environment and recreate the app container.",
+    secret: "Independent Mini App session secret",
+    secretFix:
+      "Set MINI_APP_SESSION_SECRET to a dedicated random secret of at least 32 characters and restart.",
+    https: "HTTPS Mini App origin",
+    httpsFix: "Enable TLS on the public endpoint and use its HTTPS origin for BETTER_AUTH_URL.",
+    integrations: "Optional service reachability",
+    "quote-workerFix":
+      "Check that quote-worker is healthy and shares QUOTE_WORKER_SOCKET with the app.",
+    "media-workerFix":
+      "Check the media-worker socket mount and verify the shared MEDIA_WORKER_SECRET.",
+    "coding-workerFix":
+      "Check the coding-worker endpoint and verify the shared CODING_WORKER_SECRET.",
+    "nsfw-apiFix":
+      "Check that the classifier is running and NSFW_API_URL is reachable from the app.",
+  },
   login: {
     title: "Welcome back",
     description: "Sign in to your Hanori workspace",

@@ -1,3 +1,4 @@
+import { systemDiagnosticsRoutes, type DiagnosticChecks } from "./routes/system-diagnostics.js";
 import { promptVersionRoutes } from "./routes/prompt-versions.js";
 import { scheduledTaskRoutes } from "./routes/scheduled-tasks.js";
 import type { ScheduledTaskService } from "./services/scheduled-tasks.js";
@@ -81,6 +82,7 @@ import type { RuntimeHealthReader } from "./runtime-health.js";
 import { EngagementSampleService } from "./services/engagement-sample-service.js";
 
 interface AppOptions {
+  diagnostics?: DiagnosticChecks;
   scheduledTasks?: ScheduledTaskService;
   logger?: Pick<Logger, "error">;
   pluginManager?: PluginManager;
@@ -172,7 +174,9 @@ export function createApp(options: AppOptions) {
     .use("/api/logs/stream", initializeStreamingCancellation)
     .use("/api/bots/:botId/runs/:runId/stream", initializeStreamingCancellation)
     .use("*", (c, next) =>
-      c.req.path.startsWith("/api/asr-audio/") ? next() : requestLogger(c, next),
+      c.req.path.startsWith("/api/asr-audio/") || c.req.path === "/api/system/diagnostics"
+        ? next()
+        : requestLogger(c, next),
     )
     .route("/", publicDocsRoutes())
     .use("*", async (c, next) => {
@@ -191,7 +195,9 @@ export function createApp(options: AppOptions) {
       if (err instanceof HTTPException) {
         return c.json({ ok: false as const, error: err.message }, err.status);
       }
-      console.error("Unhandled error:", err);
+      if (c.req.path === "/api/system/diagnostics")
+        console.error("System diagnostics request failed");
+      else console.error("Unhandled error:", err);
       return c.json({ ok: false as const, error: "Internal Server Error" }, 500);
     })
     .on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
@@ -370,6 +376,8 @@ export function createApp(options: AppOptions) {
     .use("/api/plugins/*", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
     .route("/api/plugins", pluginRoutes(options.pluginManager, options.mediaJobs))
     .route("/api/mcp-servers", mcpServerRoutes(db, mcpClientManager, encryptionKey))
+    .use("/api/system/*", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
+    .route("/api/system", systemDiagnosticsRoutes(baseURL, runtimeHealth, options.diagnostics))
     .get("/api/health", (c) => c.json({ ok: true as const }))
     .get("/api/health/live", (c) => {
       const { version } = runtimeHealth.snapshot();

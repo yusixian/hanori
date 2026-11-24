@@ -21,7 +21,7 @@ beforeAll(async () => {
   ({ createApp } = await import("./app.js"));
 }, 30_000);
 
-function createRoleApp(role: string, onSession?: () => void) {
+function createRoleApp(role: string | null, onSession?: () => void) {
   let selectCalls = 0;
   const db = {
     select: vi.fn(() => {
@@ -68,6 +68,7 @@ function createRoleApp(role: string, onSession?: () => void) {
       api: {
         getSession: vi.fn(async () => {
           onSession?.();
+          if (role === null) return null;
           return { user: { id: "user-1" }, session: { id: "session-1" } };
         }),
       },
@@ -108,10 +109,32 @@ function createRoleApp(role: string, onSession?: () => void) {
       updateLabel: vi.fn(),
     } as never,
     runtimeHealth: new RuntimeHealth(TEST_SHA),
+    diagnostics: {
+      database: async () => true,
+      migrationsReady: true,
+      panelPasswordPresent: true,
+      independentMiniAppSecret: true,
+    },
   });
 }
 
 describe("production HTTP policy", () => {
+  it.each([
+    [null, 401],
+    ["viewer", 403],
+    ["editor", 403],
+    ["owner", 200],
+    ["admin", 200],
+  ] as const)(
+    "checks workspace role %s before returning system diagnostics",
+    async (role, status) => {
+      const response = await createRoleApp(role).request("/api/system/diagnostics");
+      expect(response.status).toBe(status);
+      const body = await response.json();
+      if (status === 200) expect(body).toHaveProperty("data.version", TEST_SHA);
+      else expect(body).not.toHaveProperty("data");
+    },
+  );
   it.each(["viewer", "editor"])(
     "rejects %s access to plugin catalog and credential routes",
     async (role) => {
@@ -168,6 +191,23 @@ describe("production HTTP policy", () => {
     },
   );
 
+  it("keeps private diagnostic request parameters and backend errors out of logs and responses", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const secret = "diagnostic-test-secret";
+      const app = createRoleApp("admin", () => {
+        throw new Error(secret);
+      });
+      const response = await app.request(`/api/system/diagnostics?token=${secret}`);
+      expect(response.status).toBe(500);
+      expect(await response.text()).not.toContain(secret);
+      expect([...log.mock.calls, ...error.mock.calls].flat().join(" ")).not.toContain(secret);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
   it("does not log signed audio bearer credentials", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
