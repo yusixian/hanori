@@ -13,6 +13,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 
+import { OnboardingChecklist } from "./onboarding-checklist";
+
 const PAGE_SIZE = 12;
 
 export function BotListPage() {
@@ -133,6 +135,10 @@ export function BotListPage() {
           {t("list.description")}
         </p>
       </div>
+
+      {page === 1 && !search && data && (
+        <OnboardingChecklist firstPage={data} pageSize={PAGE_SIZE} />
+      )}
 
       <div className="max-w-md">
         <label htmlFor="bot-search" className="text-foreground mb-2 block text-sm font-medium">

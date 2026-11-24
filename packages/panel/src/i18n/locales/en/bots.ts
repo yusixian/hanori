@@ -1,4 +1,21 @@
 export const bots = {
+  onboarding: {
+    title: "First deployment",
+    progress: "{{count}}/3 complete",
+    dismiss: "Dismiss checklist",
+    security: "Secure your account",
+    securityHint: "Change your initial password, then remove PANEL_PASSWORD from .env.",
+    settings: "Open settings",
+    confirm: "I’ve completed this step",
+    provider: "Configure an AI provider",
+    configure: "Open provider settings",
+    createForProvider: "Create a bot to configure its provider",
+    bot: "Enable a Telegram bot",
+    edit: "Edit bot",
+    create: "Create bot",
+    done: "Complete",
+    pending: "Incomplete",
+  },
   status: {
     running: "Running",
     stopped: "Stopped",

@@ -1,4 +1,21 @@
 export const bots = {
+  onboarding: {
+    title: "首次部署引导",
+    progress: "已完成 {{count}}/3",
+    dismiss: "关闭引导",
+    security: "检查账号安全",
+    securityHint: "修改初始密码，然后从 .env 中删除 PANEL_PASSWORD。",
+    settings: "前往设置",
+    confirm: "我已完成",
+    provider: "配置 AI Provider",
+    configure: "前往 Provider 设置",
+    createForProvider: "先创建 Bot，再配置 Provider",
+    bot: "启用 Telegram Bot",
+    edit: "编辑 Bot",
+    create: "创建 Bot",
+    done: "已完成",
+    pending: "待完成",
+  },
   status: {
     running: "运行中",
     stopped: "已停止",
