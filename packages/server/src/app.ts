@@ -327,7 +327,7 @@ export function createApp(options: AppOptions) {
       ),
     )
     .route("/api/bots", cosInsideRoutes(db))
-    .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))
+    .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool, baseURL))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", promptVersionRoutes(db))

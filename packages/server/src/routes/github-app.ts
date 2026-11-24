@@ -32,6 +32,7 @@ export function botGitHubAppRoutes(
   db: Database,
   service: GitHubAppCredentialService,
   botPool: BotPool,
+  baseURL: string,
 ) {
   return new Hono<{ Variables: AuthVariables }>()
     .use("*", requireRoles(ownerOrAdmin))
@@ -71,10 +72,27 @@ export function botGitHubAppRoutes(
     })
     .post("/:botId/github-app/authorize", async (c) => {
       const botId = c.req.param("botId");
-      const [bot] = await db.select({ id: bots.id }).from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select({ aiConfig: bots.aiConfig })
+        .from(bots)
+        .where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      const refresh = c.req.query("refresh") === "1";
+      const installation = storedInstallation(bot.aiConfig);
+      if (refresh && !installation)
+        return c.json({ ok: false as const, error: "GitHub App 未连接" }, 409);
+      const userId = c.get("authUser").id;
       try {
-        const url = service.createAuthorizationUrl(botId, c.get("authUser").id);
+        const url =
+          refresh && installation
+            ? service.createOAuthAuthorizationUrl(
+                botId,
+                userId,
+                installation.installationId,
+                new URL("/api/github-app/callback", baseURL).toString(),
+                installation.connectedAt,
+              )
+            : service.createAuthorizationUrl(botId, userId);
         return c.json({ ok: true as const, data: { url, authorizationUrl: url } });
       } catch (error) {
         recordFlowError("authorize", error, botId);
@@ -202,6 +220,13 @@ export function githubAppCallbackRoutes(
             .where(eq(bots.id, botId!));
           if (!latest?.aiConfig?.githubToolsConfig) return false;
           const github = latest.aiConfig.githubToolsConfig;
+          if (
+            payload.refreshConnectedAt !== undefined &&
+            (github.githubAppInstallation?.connectedAt !== payload.refreshConnectedAt ||
+              github.githubAppInstallation?.installationId !== payload.installationId)
+          ) {
+            throw new GitHubAppFlowError("GitHub App 连接已变更，请返回面板重新同步");
+          }
           const installedRepositories = new Set(
             installation.repositories.map((repository) => repository.toLowerCase()),
           );
@@ -228,6 +253,7 @@ export function githubAppCallbackRoutes(
         if (!saved) {
           throw new GitHubAppFlowError("GitHub 工具配置已不存在，请重新保存后授权");
         }
+        service.clearInstallationToken(installation.installationId);
         await botPool.invalidateGitHubCredentials(botId);
         await restartIfRunning(botPool, botId);
         return c.redirect(panelRedirect(baseURL, botId, { githubApp: "connected" }));

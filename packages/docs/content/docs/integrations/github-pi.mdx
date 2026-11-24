@@ -23,6 +23,8 @@ Callback: ${BETTER_AUTH_URL}/api/github-app/callback
 
 owner 或 admin 在对应 Bot 的 AI/GitHub 入口发起授权，跳转 GitHub 选择安装范围和仓库，回调后返回面板。授权状态、仓库列表和撤销均以服务端为准；viewer/editor 无权访问该入口。
 
+已连接的 Bot 在 GitHub 更改仓库范围或权限后，回到面板点击「同步授权仓库」，用有权访问该安装的 GitHub 账号完成授权。面板会刷新安装范围、该账号可访问的仓库和权限。要让 Bot 使用新增仓库，还需将其加入「Bot 仓库白名单」并保存。
+
 按最小权限选择仓库，避免图省事选「所有仓库」。在面板断开连接会清理该 installation 的令牌与状态缓存（未完成的旧刷新无法回填缓存），下一次请求即失效，但已发出的 GitHub 操作不会撤销。
 
 ## Issue 创建确认

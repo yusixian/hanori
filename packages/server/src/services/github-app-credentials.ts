@@ -79,6 +79,7 @@ interface StatePayload {
   exp: number;
   nonce: string;
   installationId?: number;
+  refreshConnectedAt?: string;
 }
 
 interface CachedToken {
@@ -203,13 +204,14 @@ export class GitHubAppCredentialService {
     userId: string,
     installationId: number,
     callbackUrl: string,
+    refreshConnectedAt?: string,
   ): string {
     const config = this.requireConfig();
     this.pruneExpiredAuthState();
     if (this.oauthVerifiers.size >= MAX_PENDING_AUTH_STATES) {
       throw new GitHubAppFlowError("GitHub 授权请求过多，请稍后重试");
     }
-    const state = this.createState(botId, userId, installationId);
+    const state = this.createState(botId, userId, installationId, refreshConnectedAt);
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     this.oauthVerifiers.set(state, { value: verifier, expiresAt: this.now() + STATE_TTL_MS });
@@ -232,7 +234,12 @@ export class GitHubAppCredentialService {
     return verifier.value;
   }
 
-  createState(botId: string, userId: string, installationId?: number): string {
+  createState(
+    botId: string,
+    userId: string,
+    installationId?: number,
+    refreshConnectedAt?: string,
+  ): string {
     this.requireConfig();
     this.pruneExpiredAuthState();
     if (this.pendingStates.size >= MAX_PENDING_AUTH_STATES) {
@@ -244,6 +251,7 @@ export class GitHubAppCredentialService {
       botId,
       userId,
       exp: this.now() + STATE_TTL_MS,
+      ...(refreshConnectedAt === undefined ? {} : { refreshConnectedAt }),
       nonce: randomBytes(16).toString("hex"),
       ...(installationId === undefined ? {} : { installationId }),
     };

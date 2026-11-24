@@ -294,7 +294,8 @@ test("disables providers without an API key but accepts a key entered in the sam
   });
 });
 
-test("shows the installation account, repositories, and permissions to administrators", async () => {
+test.each([1440, 390])("shows and refreshes the GitHub installation at %i px", async (width) => {
+  await page.viewport(width, 900);
   vi.stubGlobal(
     "fetch",
     vi.fn(
@@ -341,6 +342,11 @@ test("shows the installation account, repositories, and permissions to administr
     .toHaveTextContent("The installation was revoked on GitHub");
   await expect.element(page.getByRole("button", { name: "Modify authorization" })).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
+  await page.getByRole("button", { name: "Sync authorized repositories" }).click();
+  expect(fetch).toHaveBeenCalledWith(
+    "/api/bots/test-id/github-app/authorize?refresh=1",
+    expect.objectContaining({ method: "POST" }),
+  );
 });
 
 test("explains which server configuration is missing", async () => {

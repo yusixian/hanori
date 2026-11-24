@@ -49,7 +49,7 @@ describe("GitHub App route authorization", () => {
   ])("rejects editor access to %s %s before touching storage", async (method, path) => {
     const app = new Hono<{ Variables: AuthVariables }>()
       .use("*", editorContext())
-      .route("/api/bots", botGitHubAppRoutes(db, service, botPool));
+      .route("/api/bots", botGitHubAppRoutes(db, service, botPool, "https://panel"));
     const response = await app.request(path, { method });
     expect(response.status).toBe(403);
   });
@@ -62,6 +62,51 @@ describe("GitHub App route authorization", () => {
     expect(response.status).toBe(403);
     const setupResponse = await app.request("/api/github-app/setup?installation_id=1&state=y");
     expect(setupResponse.status).toBe(403);
+  });
+
+  it("refreshes a connected installation through OAuth without another installation setup", async () => {
+    const routeDb = {
+      select: () => ({
+        from: () => ({
+          where: async () => [
+            {
+              aiConfig: {
+                githubToolsConfig: {
+                  githubAppInstallation: { installationId: 77, connectedAt: "previous" },
+                },
+              },
+            },
+          ],
+        }),
+      }),
+    } as unknown as Database;
+    const createOAuthAuthorizationUrl = vi
+      .fn()
+      .mockReturnValue("https://github.com/login/oauth/authorize");
+    const routeService = {
+      createOAuthAuthorizationUrl,
+      createAuthorizationUrl: () => "https://github.com/apps/test/installations/new",
+    } as unknown as GitHubAppCredentialService;
+    const app = new Hono<{ Variables: AuthVariables }>()
+      .use("*", ownerContext())
+      .route(
+        "/api/bots",
+        botGitHubAppRoutes(routeDb, routeService, botPool, "https://panel.example"),
+      );
+    const response = await app.request("/api/bots/bot-1/github-app/authorize?refresh=1", {
+      method: "POST",
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { url: "https://github.com/login/oauth/authorize" },
+    });
+    expect(createOAuthAuthorizationUrl).toHaveBeenCalledWith(
+      "bot-1",
+      "user-1",
+      77,
+      "https://panel.example/api/github-app/callback",
+      "previous",
+    );
   });
 
   it("turns the signed installation setup callback into a bound OAuth redirect", async () => {
@@ -126,6 +171,12 @@ describe("GitHub App route authorization", () => {
         login: "legacy-user",
         authorName: "Hanori",
         authorEmail: "ai@example.com",
+        githubAppInstallation: {
+          installationId: 77,
+          connectedAt: "previous",
+          repositorySelection: "selected",
+          repositories: ["cosorg/a"],
+        },
         repositories: configuredRepositories,
       },
     };
@@ -155,7 +206,7 @@ describe("GitHub App route authorization", () => {
       installationId: 77,
       accountLogin: "CosOrg",
       accountType: "Organization",
-      repositorySelection: "selected",
+      repositorySelection: "all",
       repositories: ["cosorg/a", "cosorg/b"],
       permissions: { contents: "write" },
     });
@@ -164,7 +215,9 @@ describe("GitHub App route authorization", () => {
         botId: "bot-1",
         userId: "user-1",
         installationId: 77,
+        refreshConnectedAt: "previous",
       }),
+      clearInstallationToken: vi.fn(),
       consumeOAuthCodeVerifier: vi.fn().mockReturnValue("pkce-verifier"),
       exchangeAndVerifyInstallation,
     } as unknown as GitHubAppCredentialService;
@@ -185,7 +238,7 @@ describe("GitHub App route authorization", () => {
     expect(exchangeAndVerifyInstallation).toHaveBeenCalledWith(
       "oauth-code",
       77,
-      undefined,
+      77,
       "https://panel.example/api/github-app/callback",
       "pkce-verifier",
     );
@@ -199,10 +252,46 @@ describe("GitHub App route authorization", () => {
       installationId: 77,
       accountLogin: "CosOrg",
       permissions: { contents: "write" },
+      repositorySelection: "all",
+      repositories: ["cosorg/a", "cosorg/b"],
     });
     expect(JSON.stringify(storedAiConfig)).not.toContain("oauth-code");
     expect(JSON.stringify(storedAiConfig)).not.toContain("pkce-verifier");
     expect(invalidateGitHubCredentials).toHaveBeenCalledWith("bot-1");
+  });
+
+  it("discards a refresh if the bot disconnects while GitHub is returning the new scope", async () => {
+    const githubToolsConfig = {
+      githubAppInstallation: { installationId: 77, connectedAt: "previous" },
+    };
+    const where = vi
+      .fn()
+      .mockResolvedValueOnce([{ aiConfig: { githubToolsConfig } }])
+      .mockResolvedValueOnce([{ aiConfig: { githubToolsConfig: {} } }]);
+    const update = vi.fn();
+    const routeDb = { select: () => ({ from: () => ({ where }) }), update } as unknown as Database;
+    const routePool = {
+      withAiConfigLock: async (_id: string, operation: () => Promise<unknown>) => operation(),
+    } as unknown as BotPool;
+    const routeService = {
+      verifyState: () => ({ botId: "bot-1", installationId: 77, refreshConnectedAt: "previous" }),
+      consumeOAuthCodeVerifier: () => "verifier",
+      exchangeAndVerifyInstallation: async () => ({
+        installationId: 77,
+        repositories: ["cosorg/a", "cosorg/b"],
+      }),
+    } as unknown as GitHubAppCredentialService;
+    const app = new Hono<{ Variables: AuthVariables }>()
+      .use("*", ownerContext())
+      .route(
+        "/api/github-app",
+        githubAppCallbackRoutes(routeDb, routeService, routePool, "https://panel.example"),
+      );
+    const response = await app.request("/api/github-app/callback?code=code&state=state");
+    const location = new URL(response.headers.get("location")!);
+    expect(location.searchParams.get("githubApp")).toBe("error");
+    expect(location.searchParams.get("message")).toContain("连接已变更");
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("returns installation connection health in the owner-only status response", async () => {
@@ -237,7 +326,10 @@ describe("GitHub App route authorization", () => {
     } as unknown as Database;
     const app = new Hono<{ Variables: AuthVariables }>()
       .use("*", ownerContext())
-      .route("/api/bots", botGitHubAppRoutes(routeDb, routeService, {} as BotPool));
+      .route(
+        "/api/bots",
+        botGitHubAppRoutes(routeDb, routeService, {} as BotPool, "https://panel"),
+      );
 
     const response = await app.request("/api/bots/bot-1/github-app");
     expect(response.status).toBe(200);
@@ -256,6 +348,7 @@ describe("GitHub App route authorization", () => {
         userId: "user-1",
         installationId: 77,
       }),
+      clearInstallationToken: vi.fn(),
       consumeOAuthCodeVerifier: vi.fn().mockReturnValue("pkce-verifier"),
     } as unknown as GitHubAppCredentialService;
     const app = new Hono<{ Variables: AuthVariables }>()
@@ -322,6 +415,7 @@ describe("GitHub App route authorization", () => {
         userId: "user-1",
         installationId: 77,
       }),
+      clearInstallationToken: vi.fn(),
       consumeOAuthCodeVerifier: vi.fn().mockReturnValue("pkce-verifier"),
       exchangeAndVerifyInstallation: vi.fn().mockResolvedValue({
         installationId: 77,
