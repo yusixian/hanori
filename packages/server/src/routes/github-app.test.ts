@@ -141,14 +141,7 @@ describe("GitHub App route authorization", () => {
     );
   });
 
-  it.each([
-    [
-      "intersects configured repositories with the authorized snapshot",
-      ["cosorg/a", "outside/repo"],
-      ["cosorg/a"],
-    ],
-    ["keeps an empty repository allowlist deny-all", [], []],
-  ])("%s", async (_label, configuredRepositories, expectedRepositories) => {
+  it("clears the legacy repository list when saving an installation snapshot", async () => {
     const existingAiConfig = {
       enabled: false,
       encryptedApiKey: null,
@@ -177,7 +170,7 @@ describe("GitHub App route authorization", () => {
           repositorySelection: "selected",
           repositories: ["cosorg/a"],
         },
-        repositories: configuredRepositories,
+        repositories: ["cosorg/a", "outside/repo"],
       },
     };
     let storedAiConfig: unknown;
@@ -247,7 +240,7 @@ describe("GitHub App route authorization", () => {
       unknown
     >;
     expect(github.encryptedToken).toBeUndefined();
-    expect(github.repositories).toEqual(expectedRepositories);
+    expect(github.repositories).toEqual([]);
     expect(github.githubAppInstallation).toMatchObject({
       installationId: 77,
       accountLogin: "CosOrg",

@@ -350,8 +350,7 @@ export const aiSettings = {
     },
     githubTools: {
       title: "GitHub identity and code access",
-      description:
-        "Configure the bot's Git commit author, repository allowlist, and confirmations.",
+      description: "Configure the bot's Git commit author, GitHub App access, and confirmations.",
     },
     agentTools: {
       title: "Agent tools",
@@ -761,12 +760,8 @@ export const aiSettings = {
       "The saved coding provider is no longer available. Select another provider or follow the chat model before saving.",
     authorName: "Git commit author name",
     authorEmail: "Git commit author email",
-    repositories: "Bot repository allowlist",
-    repositoriesDescription:
-      "One owner/repo per line. Acts as an inner allowlist inside your GitHub installation—private reads and admin writes require both.",
-    installationScopeTitle: "Two repository boundaries",
-    installationScope:
-      "GitHub authorization sets the outer limit; this allowlist sets the inner limit. Expanding GitHub access never widens this list automatically.",
+    repositories: "Repositories for the legacy token",
+    repositoriesDescription: "Enter one owner/repo per line.",
   },
   artworkTools: {
     title: "Artwork Tools",

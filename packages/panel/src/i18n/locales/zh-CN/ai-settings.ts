@@ -339,7 +339,7 @@ export const aiSettings = {
     },
     githubTools: {
       title: "GitHub 身份与代码访问",
-      description: "配置助手的独立身份、仓库白名单和确认权限。",
+      description: "配置助手的独立身份、GitHub App 授权和确认权限。",
     },
     agentTools: {
       title: "Agent 工具",
@@ -704,12 +704,8 @@ export const aiSettings = {
       "已保存的 Coding 服务商不再可用，请改选其他服务商或跟随聊天模型后保存。",
     authorName: "Git 提交作者名称",
     authorEmail: "Git 提交作者邮箱",
-    repositories: "Bot 仓库白名单",
-    repositoriesDescription:
-      "每行一个 owner/repo。作为 GitHub 授权范围之内的二次白名单，私有读取和管理员写操作需同时满足两处授权。",
-    installationScopeTitle: "双重仓库边界",
-    installationScope:
-      "GitHub 授权决定外层范围，Bot 白名单决定内层范围。扩大 GitHub 授权不会自动放宽此白名单。",
+    repositories: "旧版 Token 可访问的仓库",
+    repositoriesDescription: "每行填写一个 owner/repo。",
   },
   artworkTools: {
     title: "作品工具",

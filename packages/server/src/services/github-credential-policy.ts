@@ -3,17 +3,11 @@ import { ownerOrAdmin } from "../middleware/better-auth.js";
 
 export interface ExistingGitHubCredential {
   login?: string;
-  githubAppInstallation?: GitHubRepositoryBoundary;
 }
 
 export interface IncomingGitHubCredential {
   token?: string;
   login?: string;
-  repositories?: string[];
-}
-
-export interface GitHubRepositoryBoundary {
-  repositories: string[];
 }
 
 export interface GitHubCodingProvider {
@@ -61,17 +55,6 @@ export function assertGitHubCodingModelSelection(
   }
 }
 
-export function clampGitHubRepositories(
-  repositories: string[],
-  installation?: GitHubRepositoryBoundary,
-): string[] {
-  if (!installation) return repositories;
-  const installed = new Set(
-    installation.repositories.map((repository) => repository.toLowerCase()),
-  );
-  return repositories.filter((repository) => installed.has(repository.toLowerCase()));
-}
-
 export function assertGitHubCredentialUpdateAllowed(
   role: string,
   existing: ExistingGitHubCredential | undefined,
@@ -84,24 +67,6 @@ export function assertGitHubCredentialUpdateAllowed(
     throw new HTTPException(403, {
       message: "只有 owner 或 admin 可以修改 GitHub 凭据",
     });
-  }
-
-  if (existing?.githubAppInstallation && incoming.repositories) {
-    const allowed = new Set(
-      existing.githubAppInstallation.repositories.map((repository) => repository.toLowerCase()),
-    );
-    const outsideInstallation = [
-      ...new Set(
-        incoming.repositories
-          .map((repository) => repository.toLowerCase())
-          .filter((repository) => !allowed.has(repository)),
-      ),
-    ];
-    if (outsideInstallation.length > 0) {
-      throw new HTTPException(400, {
-        message: `GitHub 仓库白名单超出当前 App installation 范围：${outsideInstallation.join(", ")}`,
-      });
-    }
   }
 }
 

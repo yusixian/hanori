@@ -193,9 +193,9 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
           : patch.githubToolsConfig.login || undefined,
       authorName: patch.githubToolsConfig.authorName,
       authorEmail: patch.githubToolsConfig.authorEmail,
-      repositories: [
-        ...new Set(patch.githubToolsConfig.repositories.map((repo) => repo.toLowerCase())),
-      ],
+      repositories: githubToolsConfig?.githubAppInstallation
+        ? []
+        : [...new Set(patch.githubToolsConfig.repositories.map((repo) => repo.toLowerCase()))],
     };
   }
   if (githubToolsConfig) {

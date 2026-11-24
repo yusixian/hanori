@@ -6,7 +6,7 @@ The bot can use a dedicated GitHub identity without exposing its credential to t
 
 - Non-administrators receive read tools only. Those tools use anonymous GitHub API requests, even
   when a token is configured, so they can only access public repositories.
-- Administrators may use the configured token only for repositories in the explicit allowlist.
+- Administrators can use the GitHub App for every repository in its synced installation scope. Legacy personal access tokens use the configured repository list.
 - Creating, updating, reopening, or closing an Issue creates a one-time Telegram confirmation. The
   exact request is bound to the initiating administrator and chat, expires after ten minutes, and is
   consumed before execution.
@@ -18,7 +18,7 @@ The bot can use a dedicated GitHub identity without exposing its credential to t
   in a model tool result.
 - GitHub MCP servers are marked administrator-only so they cannot bypass this boundary.
 
-## Dedicated account setup
+## Legacy personal access token setup
 
 1. Create a separate GitHub account for the bot and add it only to repositories it should access.
 2. Create a fine-grained personal access token restricted to those repositories.

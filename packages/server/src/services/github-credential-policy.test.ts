@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   assertGitHubCodingModelSelection,
   assertGitHubCredentialUpdateAllowed,
-  clampGitHubRepositories,
   GitHubCredentialGenerationGate,
 } from "./github-credential-policy.js";
 
@@ -47,37 +46,6 @@ describe("GitHub credential policy", () => {
         { login: "new-account", token: "ghp_new" },
       ),
     ).not.toThrow();
-  });
-
-  it("rejects repositories outside the connected installation snapshot", () => {
-    expect(() =>
-      assertGitHubCredentialUpdateAllowed(
-        "editor",
-        {
-          login: "installed-account",
-          githubAppInstallation: { repositories: ["cos/allowed"] },
-        },
-        { repositories: ["COS/ALLOWED", "cos/outside"] },
-      ),
-    ).toThrowError(/cos\/outside/);
-    try {
-      assertGitHubCredentialUpdateAllowed(
-        "owner",
-        { githubAppInstallation: { repositories: ["cos/allowed"] } },
-        { repositories: ["cos/outside"] },
-      );
-    } catch (error) {
-      expect((error as HTTPException).status).toBe(400);
-    }
-  });
-
-  it("clamps runtime repositories to the installation snapshot", () => {
-    expect(
-      clampGitHubRepositories(["COS/ALLOWED", "cos/outside"], {
-        repositories: ["cos/allowed"],
-      }),
-    ).toEqual(["COS/ALLOWED"]);
-    expect(clampGitHubRepositories(["legacy/one"])).toEqual(["legacy/one"]);
   });
 });
 

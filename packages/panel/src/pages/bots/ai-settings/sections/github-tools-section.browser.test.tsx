@@ -51,6 +51,23 @@ test("hides credential operations from editors and viewers", async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
+test("keeps the repository list editable for legacy personal tokens", async () => {
+  stubUnavailableGitHubApp();
+  const onUpdate = vi.fn();
+  render(
+    <GitHubToolsSection
+      botId="test-id"
+      canManageCredentials
+      authorizationBlocked={false}
+      providers={[]}
+      config={{ ...DEFAULT_GITHUB_TOOLS, enabled: true, hasToken: true }}
+      onUpdate={onUpdate}
+    />,
+  );
+  await page.getByRole("textbox", { name: "Repositories for the legacy token" }).fill("Owner/Repo");
+  expect(onUpdate).toHaveBeenCalledWith({ repositories: ["owner/repo"] });
+});
+
 test("lets administrators make Create Issue confirmations non-expiring", async () => {
   stubUnavailableGitHubApp();
   const onUpdate = vi.fn();
@@ -336,6 +353,7 @@ test.each([1440, 390])("shows and refreshes the GitHub installation at %i px", a
 
   await expect.element(page.getByText("hanori", { exact: true })).toBeVisible();
   await expect.element(page.getByText("cos/example", { exact: true })).toBeVisible();
+  expect(document.querySelector("textarea")).toBeNull();
   await expect.element(page.getByText("contents: write", { exact: true })).toBeVisible();
   await expect
     .element(page.getByRole("alert"))

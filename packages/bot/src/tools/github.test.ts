@@ -321,7 +321,7 @@ describe("GitHub tools permissions", () => {
         title: "Nope",
       }),
     ).resolves.toEqual({
-      error: "Repository is not in the administrator-managed GitHub allowlist",
+      error: "Repository is not in the bot's authorized GitHub repositories",
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(api.sendMessage).not.toHaveBeenCalled();
@@ -398,7 +398,7 @@ describe("GitHub tools permissions", () => {
         draft: false,
       }),
     ).resolves.toEqual({
-      error: "Repository is not in the administrator-managed GitHub allowlist",
+      error: "Repository is not in the bot's authorized GitHub repositories",
     });
     registry.destroy();
   });

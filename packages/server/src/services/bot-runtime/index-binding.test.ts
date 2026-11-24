@@ -188,6 +188,28 @@ describe("Bot runtime service binding", () => {
     expect(disabled.config.githubIssueProposals).toBe(port);
   });
 
+  it.each(["selected", "all"] as const)(
+    "uses all synced repositories for a %s GitHub App installation",
+    async (repositorySelection) => {
+      const config = githubToolsConfig();
+      config.githubAppInstallation = {
+        installationId: 17,
+        accountLogin: "owner",
+        accountType: "User",
+        repositorySelection,
+        repositories: ["owner/new", "owner/private"],
+        permissions: {},
+        connectedAt: "now",
+      };
+      const runtime = await assemble(runtimeServices({}, logger()), {
+        aiConfig: aiConfig({ githubToolsConfig: config }),
+      });
+      const resolved = runtime.config.aiReply?.githubToolsConfig;
+      expect(resolved?.repositories).toEqual(["owner/new", "owner/private"]);
+      expect(resolved?.tokenProvider).toBeUndefined();
+    },
+  );
+
   it("GitHub code callbacks call the workspace service attached now", async () => {
     const assembled = gitWorkspace();
     const services = runtimeServices({}, logger(), {

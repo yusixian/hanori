@@ -28,7 +28,7 @@ export interface GitHubToolsConfigStored {
   login?: string;
   authorName: string;
   authorEmail: string;
-  /** owner/repository entries that administrators may access with the configured identity. */
+  /** Legacy token repository scope. A connected GitHub App uses its installation repositories. */
   repositories: string[];
 }
 

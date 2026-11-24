@@ -12,7 +12,6 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { tryDecrypt } from "../utils/crypto.js";
 import type { GitHubAppCredentialService } from "./github-app-credentials.js";
-import { clampGitHubRepositories } from "./github-credential-policy.js";
 import type { GitHubIssueProposalStore } from "./github-issue-proposal-store.js";
 
 const descriptorSchema = z.object({
@@ -97,7 +96,7 @@ export type AuthorizeGitHubIssueProposal = (
   repository?: string,
 ) => Promise<GitHubIssueProposalAuthorization>;
 
-/** Every call reads the current tenant, administrator list, allowlist and credential. */
+/** Every call reads the current tenant, administrator list, repository scope and credential. */
 export function createGitHubIssueProposalAuthorizer(
   db: Database,
   encryptionKey: string,
@@ -113,9 +112,9 @@ export function createGitHubIssueProposalAuthorizer(
       throw new Error("当前身份不是已启用 Bot 的管理员，或 GitHub 工具已关闭");
     }
     const installation = config.githubAppInstallation;
-    const allowed = clampGitHubRepositories(config.repositories, installation);
+    const allowed = installation?.repositories ?? config.repositories;
     if (repository && !allowed.some((repo) => repo.toLowerCase() === repository.toLowerCase())) {
-      throw new Error("仓库已不在当前 GitHub 白名单中");
+      throw new Error("仓库不在当前 GitHub 授权范围内");
     }
     const snapshot = JSON.stringify(bot);
     const app = getAppService();

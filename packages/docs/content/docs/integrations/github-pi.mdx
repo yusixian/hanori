@@ -23,15 +23,15 @@ Callback: ${BETTER_AUTH_URL}/api/github-app/callback
 
 owner 或 admin 在对应 Bot 的 AI/GitHub 入口发起授权，跳转 GitHub 选择安装范围和仓库，回调后返回面板。授权状态、仓库列表和撤销均以服务端为准；viewer/editor 无权访问该入口。
 
-已连接的 Bot 在 GitHub 更改仓库范围或权限后，回到面板点击「同步授权仓库」，用有权访问该安装的 GitHub 账号完成授权。面板会刷新安装范围、该账号可访问的仓库和权限。要让 Bot 使用新增仓库，还需将其加入「Bot 仓库白名单」并保存。
+已连接的 Bot 在 GitHub 更改仓库范围或权限后，回到面板点击「同步授权仓库」，用有权访问该安装的 GitHub 账号完成授权。面板会刷新安装范围、该账号可访问的仓库和权限。Bot 管理员可直接使用同步列表中的全部仓库。现有 Bot 升级后也使用这份列表，旧的 Bot 白名单不再限制 GitHub App。
 
-按最小权限选择仓库，避免图省事选「所有仓库」。在面板断开连接会清理该 installation 的令牌与状态缓存（未完成的旧刷新无法回填缓存），下一次请求即失效，但已发出的 GitHub 操作不会撤销。
+在 GitHub 选择「All repositories」可授权该账号的所有仓库，选择「Only select repositories」可逐个指定仓库。在面板断开连接会清理该 installation 的令牌与状态缓存（未完成的旧刷新无法回填缓存），下一次请求即失效，但已发出的 GitHub 操作不会撤销。
 
 ## Issue 创建确认
 
-- **仓库定位**：管理员可让 Bot 调用 `github_list_repositories` 查看当前 Bot 的仓库白名单（默认每页 50 条，支持 `page`/`limit`）。该工具不请求凭据、不访问 GitHub、仅管理员可用，返回 `accessVerified=false`，实际访问仍需过权限校验。遇到「自己的仓库」或 404（可能是私有仓无权访问）时，Bot 结合白名单与上下文定位 `owner/repo`，仍有歧义则询问用户，失败结果带 `repository_resolution_failed` 便于日志追踪。
+- **仓库定位**：管理员可让 Bot 调用 `github_list_repositories` 查看当前 Bot 的授权仓库（默认每页 50 条，支持 `page`/`limit`）。该工具不请求凭据、不访问 GitHub、仅管理员可用，返回 `accessVerified=false`，实际访问仍需过权限校验。遇到「自己的仓库」或 404（可能是私有仓无权访问）时，Bot 结合授权列表与上下文定位 `owner/repo`，仍有歧义则询问用户，失败结果带 `repository_resolution_failed` 便于日志追踪。
 - **提案与有效期**：`github_create_issue` 先保存固定提案，再向发起管理员发送 Telegram 确认卡。默认**不过期**（跨 10 分钟或重启仍有效）；`githubToolsConfig.createIssueConfirmationTtlMinutes` 为 `null` 或未设时不过期，设为正安全整数时按分钟生效（仅影响新提案）。卡片会标注「不过期」或具体到期时间。
-- **绑定与校验**：仅发起管理员可在原聊天（若在话题中则须在原话题）确认或撤销。普通群的回复串不算话题，回复不同消息不影响提案操作。每次点击都重新校验 Bot/工具启用状态、管理员身份、仓库白名单、App 安装范围和凭据。卡片绑定提案 ID、仓库、标题、完整正文和 SHA-256；修改内容需另建新提案并撤销旧提案。
+- **绑定与校验**：仅发起管理员可在原聊天（若在话题中则须在原话题）确认或撤销。普通群的回复串不算话题，回复不同消息不影响提案操作。每次点击都重新校验 Bot/工具启用状态、管理员身份、仓库授权范围和凭据。卡片绑定提案 ID、仓库、标题、完整正文和 SHA-256；修改内容需另建新提案并撤销旧提案。
 - **撤销与查询**：点「撤销提案」或调用 `github_cancel_issue_proposal` 可取消待确认提案；调用 `github_pending_issue_proposals` 可查看当前会话中待确认、执行中及结果未知的提案，并重发最多 10 张卡片。已取消、过期或完成的旧按钮不可再执行。
 - **防重与核实**：重复或并发点击最多触发一次创建。正文末尾会附带含提案 ID 和完整 hash 的 HTML 注释用于远端核实。
   - claim 后、发出请求前失败或中断：显示「未执行」，旧卡作废。
