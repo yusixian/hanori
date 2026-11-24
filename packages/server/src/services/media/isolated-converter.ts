@@ -184,8 +184,8 @@ export class IsolatedAudioConverter {
     }
   }
 
-  async health(): Promise<void> {
-    await this.call("GET", "/health");
+  async health(signal?: AbortSignal): Promise<void> {
+    await this.call("GET", "/health", undefined, signal);
   }
 
   async cancel(id: string): Promise<void> {

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { authFetch } from "@/lib/client";
 import {
+  Activity,
   ArrowUpRight,
   Check,
   CheckCheck,
@@ -285,6 +286,13 @@ export function SettingsPage() {
             </div>
           </div>
           <nav className="settings-jump-links" aria-label={t("settings.sectionNavigation")}>
+            {canManageMembers && (
+              <a href="/settings/diagnostics">
+                <Activity size={16} aria-hidden="true" />
+                {t("diagnostics.title")}
+                <ArrowUpRight size={14} aria-hidden="true" />
+              </a>
+            )}
             {canManageMembers && (
               <a href="#asr-settings">
                 <ShieldCheck size={16} aria-hidden="true" />

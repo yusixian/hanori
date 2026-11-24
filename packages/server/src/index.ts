@@ -655,6 +655,52 @@ const app = createApp({
   memoryConsolidationPreview: memoryConsolidator,
   engagementSampleService,
   runtimeHealth,
+  diagnostics: {
+    database: async (signal) => {
+      const query = dbClient`select 1`;
+      const cancel = () => {
+        void Promise.resolve(query.cancel()).catch(() => undefined);
+      };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        await query;
+        return !signal.aborted;
+      } finally {
+        signal.removeEventListener("abort", cancel);
+      }
+    },
+    // HTTP starts only after runMigrations resolves.
+    migrationsReady: true,
+    panelPasswordPresent: Boolean(env.PANEL_PASSWORD),
+    independentMiniAppSecret:
+      env.MINI_APP_SESSION_SECRET.trim().length >= 32 &&
+      ![
+        env.BETTER_AUTH_SECRET,
+        env.ENCRYPTION_KEY,
+        env.BOT_TOKEN,
+        env.PANEL_PASSWORD,
+        env.MEDIA_WORKER_SECRET,
+        env.CODING_WORKER_SECRET,
+        env.GOOGLE_CLIENT_SECRET,
+        env.GITHUB_APP_CLIENT_SECRET,
+      ].includes(env.MINI_APP_SESSION_SECRET),
+    quote: quoteRenderer && (() => quoteRenderer.available()),
+    media: mediaConverter && ((signal) => mediaConverter.health(signal).then(() => true)),
+    coding: codingWorkerClient.configured
+      ? (signal) => codingWorkerClient.available(signal)
+      : undefined,
+    nsfw:
+      nsfwChecker &&
+      (async (signal) => {
+        // Compose checks HTTP reachability at the service root without classifying an image.
+        const response = await fetch(env.NSFW_API_URL.replace(/\/+$/, "") + "/", {
+          signal,
+          redirect: "manual",
+        });
+        await response.body?.cancel();
+        return response.status < 500;
+      }),
+  },
   quoteRenderer,
   harness: harnessService,
   harnessAdmin,
