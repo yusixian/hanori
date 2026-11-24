@@ -2,6 +2,39 @@ import { expect, test } from "@playwright/test";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+test("self-hosting overview links to the rendered architecture and troubleshooting FAQ", async ({
+  page,
+}) => {
+  await page.goto("/docs/self-hosting/");
+  await page.getByRole("main").getByRole("link", { name: "系统架构", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("系统架构");
+  const diagram = page.getByRole("img", { name: /^Hanori 系统架构图/ });
+  await expect(diagram).toBeVisible();
+  await expect(diagram).toHaveJSProperty("complete", true);
+  expect(await diagram.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(
+    0,
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    await page.evaluate(() => window.innerWidth),
+  );
+
+  const [asset] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().isNavigationRequest() && response.url().endsWith("/architecture.svg"),
+    ),
+    page.getByRole("link", { name: "打开原图（SVG）" }).click(),
+  ]);
+  expect(asset.ok()).toBe(true);
+  expect(asset.headers()["content-type"]).toContain("image/svg+xml");
+  await page.goBack();
+
+  await page.getByRole("main").getByRole("link", { name: "自托管排障 FAQ", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("自托管排障 FAQ");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /Dokploy 提示网络冲突/ })).toBeVisible();
+});
+
 test("public release deep links render and hydrate on desktop and mobile", async ({
   page,
 }, info) => {

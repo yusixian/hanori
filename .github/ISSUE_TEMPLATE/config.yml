@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security reporting
+    url: https://github.com/yusixian/hanori/blob/main/SECURITY.md
+    about: Follow the security policy for private vulnerability reporting.
+  - name: Hanori documentation
+    url: https://bot.cosine.ren/docs/
+    about: Find setup guides and troubleshooting instructions.

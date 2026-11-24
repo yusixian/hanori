@@ -1,4 +1,12 @@
 {
   "title": "自托管",
-  "pages": ["index", "configuration", "docker", "reverse-proxy", "backup-upgrade"]
+  "pages": [
+    "index",
+    "architecture",
+    "configuration",
+    "docker",
+    "reverse-proxy",
+    "backup-upgrade",
+    "troubleshooting"
+  ]
 }

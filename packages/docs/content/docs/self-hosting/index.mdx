@@ -5,9 +5,11 @@ description: 了解服务组成、前置条件和从开发到生产的部署路�
 
 Hanori 是 pnpm monorepo 应用，包含 Telegram Bot、Hono 服务端、React 管理面板、PostgreSQL 数据库和可选的编码 worker。生产环境由 Hono 统一托管 API 和静态面板，应用启动时自动执行数据库迁移。
 
-从 GitHub 获取对应版本的源码和部署模板。使用受访问控制的镜像时，先为部署服务器配置镜像仓库认证。
+从 [GitHub 仓库](https://github.com/yusixian/hanori)获取对应版本的源码和部署模板，或按[Docker 部署指南](/docs/self-hosting/docker)使用预构建镜像。使用受访问控制的镜像时，先为部署服务器配置镜像仓库认证。
 
 ## 组件关系
+
+部署拓扑和 worker 的隔离方式见[系统架构](/docs/self-hosting/architecture)。
 
 | 组件            | 职责                                                 |
 | --------------- | ---------------------------------------------------- |
@@ -59,3 +61,5 @@ curl -fsS http://127.0.0.1:43100/api/health/ready
 3. 按 [HTTPS 反向代理](/docs/self-hosting/reverse-proxy)接入公开域名，检查 `/api/health` 与 `/api/health/ready`，通过后再登录面板。
 4. 添加 Bot、Provider 和备份策略，最后启用可选集成。
 5. 后续升级与迁移按[备份与升级](/docs/self-hosting/backup-upgrade)执行。
+
+启动、代理、密钥或可选服务出现问题时，查看[自托管排障 FAQ](/docs/self-hosting/troubleshooting)。

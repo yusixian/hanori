@@ -1,0 +1,54 @@
+---
+title: 自托管排障 FAQ
+description: 按现象排查启动、加密密钥、HTTPS 登录、Mini App 签名、Compose profiles 和 Dokploy 网络。
+---
+
+## 服务没起来，先查哪里？
+
+先执行下列命令。Docker Compose 命令需沿用部署时的项目名、环境文件和 Compose 文件组合。
+
+```bash
+pnpm deploy:env:check
+docker compose ps -a
+curl -sS -i https://bot.example.com/api/health/ready
+```
+
+- 配置检查默认读取 `.env`。用 `--file` 指定其他文件，直接从源码运行时加 `--mode local`。Dokploy 的 Environment、Shell 环境和 Compose 覆盖文件可能改变容器的实际配置。
+- 就绪接口应返回 HTTP 200、`ok: true` 和 `status: "ready"`。记录 `version` 以确认实际运行的构建。若 app 没有启动，检查数据库、启动前备份任务、默认启用的 `quote-worker` 及 app 的启动日志。若 app 已启动但就绪接口返回 503，查看数据库连接与迁移状态。
+- 若上游就绪接口正常而公网返回 502 或无法连接，检查反代上游地址、端口和网络。参见 [HTTPS 反向代理](/docs/self-hosting/reverse-proxy)。
+
+## 丢失或更换了 ENCRYPTION_KEY，还能恢复吗？
+
+应用要求设置非空的 `ENCRYPTION_KEY`。已有数据库需要当初加密凭据的原值。意外换值后，服务可能仍能启动，但 Bot Token、API Key 等已有配置无法解密。
+
+1. 从受保护的环境文件或部署平台 Secret 恢复原值，核对首尾空格和覆盖顺序。旧版曾依赖隐式密钥的部署按[备份与升级](/docs/self-hosting/backup-upgrade#将历史加密密钥迁入显式配置)离线恢复。
+2. 用原密钥重新创建 app 容器或重启源码进程，验证可读取已有凭据的 Bot 与集成。恢复数据库时保留与备份匹配的密钥。
+3. 原密钥确实遗失时，已有密文无法恢复。先保留数据库与卷备份，再从对应供应商重发或轮换凭据，并在面板重配受影响的 Bot 和集成。
+
+## HTTPS 可访问，为什么登录循环或 OAuth 回调失败？
+
+`BETTER_AUTH_URL` 应为浏览器实际使用的公开 origin，例如 `https://bot.example.com`，只包含协议、主机和必要的端口。代理到 app 的内部上游仍可使用 HTTP。确保反代保留公开 Host 和协议（如 `X-Forwarded-Proto: https`），并让 OAuth 供应商登记的回调与实际 HTTPS 地址一致。修改配置后重建 app 容器，重新登录验证登录响应、后续的 `/api/authz/me` 和 OAuth 回调。配置示例见 [HTTPS 反向代理](/docs/self-hosting/reverse-proxy)。
+
+## Mini App 返回 401，怎么检查签名和会话？
+
+1. 关闭后从对应 Bot 的 Telegram 菜单重新打开 Mini App。普通浏览器访问没有 Telegram 注入的签名 `initData`。核对 BotFather 菜单中的 HTTPS URL、URL 内的 Bot ID，以及服务端保存的 Token 是否都对应同一个 Bot。
+2. 同步服务器时钟。服务端按 `auth_date` 校验新鲜度，默认最长 5 分钟，并拒绝未来时间戳。保留 Telegram WebView 提交的原始请求内容，确认代理传递 Cookie 并绕过 `/api/mini-app/*` 缓存。
+3. 确认所有 app 实例使用相同且独立的 `MINI_APP_SESSION_SECRET`，长度至少 32 字符。轮换后从 Telegram 重新打开以建立会话。收到 404 时检查 Bot 的 Mini App 开关和当前账号权限。参见 [Telegram Mini App](/docs/guides/mini-app)。
+
+## 为什么启用了 profile，功能仍然不可用？
+
+在部署环境设置 `COMPOSE_PROFILES`，多个值以逗号分隔，例如 `nsfw,media,coding`。用原 Compose 文件组合重新部署，确保 app 也加载了更新后的变量。用 `docker compose ps -a` 和对应服务日志检查容器是否启动以及是否健康。
+
+- **`nsfw`**：内置分类服务地址为 `NSFW_API_URL=http://nsfw-api:3000`。容器中的 `localhost` 指向 app 自身。图片全部加罩时查看生成记录的检测状态，分类不可用、超时或响应无效都会触发保守加罩。完整配置见 [NSFW 图片检测](/docs/self-hosting/configuration#nsfw-图片检测)。
+- **`media`**：为 app 与 `media-worker` 设置同一个独立的 `MEDIA_WORKER_SECRET`。若 worker 不健康，检查共享 socket 和任务卷是否挂载一致。worker 恢复健康后仍无法转录时，检查公共转录账户和 Bot 插件设置。参见[可选音频转换服务](/docs/self-hosting/docker#可选音频转换服务)。
+- **`coding`**：设置独立的 `CODING_WORKER_SECRET`，确认 `coding-worker` 和 `coding-egress-proxy` 都健康。连接失败时检查 app 和 worker 是否共享控制 socket 卷，外部依赖请求失败时检查出口代理日志。参见 [GitHub 与 Pi](/docs/integrations/github-pi)。
+
+## Dokploy 提示网络冲突，或部署后返回 502？
+
+在 Dokploy 关闭 **Enable Isolated Deployment**。它会给服务注入额外网络，与 `quote-worker` 和 `media-worker` 的 `network_mode: none` 冲突，也会破坏 `coding-worker` 仅连接 `coding-sandbox` 的隔离边界。
+
+只为 `app` 配置域名，确认 Preview Compose 中 app 保留 `default` 与 `harness-bridge` 并加入代理网络。`TRAEFIK_DOCKER_NETWORK` 应匹配实际代理网络，默认是 `dokploy-network`。保留原项目名与卷配置，重新部署后再从公网检查 `/api/health/ready`。
+
+## 需要提交 Issue 时，提供什么？
+
+使用 [Self-hosting help](https://github.com/yusixian/hanori/issues/new?template=self_hosting_help.yml)，提供版本与 commit SHA、部署方式、Docker/Compose 版本、反代类型、实际启用的 profiles、脱敏后的环境检查结果及就绪接口状态。附上最小复现和相关错误片段，移除 Token、连接字符串、Cookie、`initData` 和个人信息，保留 `.env` 在本地。Bot 回复、模型和功能使用问题可先查[应用故障排查](/docs/reference/troubleshooting)。
