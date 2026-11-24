@@ -1,5 +1,7 @@
 # Hanori · 花织
 
+中文 | [English](README.en.md)
+
 自托管的 Telegram AI 伙伴，基于 [grammY](https://grammy.dev/)、[Hono](https://hono.dev/)、[React 19](https://react.dev/) 与 [Refine](https://refine.dev/) 构建。
 
 支持多 Bot 管理、AI 对话与记忆、群聊自然接话、图片与贴纸生成、RSS / 定时提醒、插件与 MCP 工具接入，以及配套的 Web 管理面板和 Telegram Mini App。
