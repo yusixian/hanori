@@ -7,12 +7,13 @@ import {
   resolveBotSkills,
 } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
-import { bots } from "@cos-tool-bot/database";
+import { bots, memoryConsolidationState } from "@cos-tool-bot/database";
 import type { AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { and, asc, count, eq, ilike } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import * as fs from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { env } from "../env.js";
@@ -23,7 +24,7 @@ import {
   ChatAiSelectionError,
   type ChatAiSelectionService,
 } from "../services/chat-ai-selection-service.js";
-import type { HistoricalBatchPage } from "../services/memory-consolidator.js";
+import { MemoryReviewError, type HistoricalBatchPage } from "../services/memory-consolidator.js";
 import {
   MemoryLegacyCleanup,
   MEMORY_DUPLICATE_BATCH_MAX,
@@ -86,6 +87,19 @@ const memoryTelegramIdFilterSchema = z
   .optional();
 
 export interface MemoryConsolidationPreviewPort {
+  review(
+    botId: string,
+    chatId: number,
+    start: Date,
+    end: Date,
+    afterMessageId?: number,
+  ): Promise<{
+    nextAfterMessageId: number | null;
+    calls: number;
+    changes: number;
+    inputTokens: number;
+    outputTokens: number;
+  }>;
   previewHistoricalBatches(
     botId: string,
     options: { afterMessageId?: number; limit?: number },
@@ -341,6 +355,16 @@ async function readSafeUpstreamError(response: Response, apiKey: string): Promis
   } catch (error) {
     return error instanceof Error ? error.message : "Unable to read upstream error response";
   }
+}
+
+function automaticGroupImpressions(config: AiConfigStored | null) {
+  const memory = config?.botMemoryConfig;
+  return (
+    config?.enabled === true &&
+    memory?.enabled === true &&
+    memory.consolidation?.enabled !== false &&
+    memory.consolidation?.groupImpressions !== false
+  );
 }
 
 export function botsRoutes(
@@ -909,10 +933,40 @@ export function botsRoutes(
         }
 
         const changedAt = new Date(Math.max(Date.now(), (bot.updatedAt?.getTime() ?? 0) + 1));
-        await db
-          .update(bots)
-          .set({ aiConfig: updatedAiConfig, updatedAt: changedAt })
-          .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
+        if (
+          !ownerOrAdmin.has(c.get("authMember").role) &&
+          !isDeepStrictEqual(
+            bot.aiConfig?.botMemoryConfig?.consolidation,
+            updatedAiConfig.botMemoryConfig?.consolidation,
+          )
+        )
+          throw new HTTPException(403, {
+            message: "Administrator access required to configure memory review",
+          });
+
+        const saveConfig = (client: Pick<Database, "update">) =>
+          client
+            .update(bots)
+            .set({ aiConfig: updatedAiConfig, updatedAt: changedAt })
+            .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
+        if (
+          !automaticGroupImpressions(bot.aiConfig) &&
+          automaticGroupImpressions(updatedAiConfig)
+        ) {
+          await db.transaction(async (tx) => {
+            // Match consolidation apply: lock the state row before the bot row.
+            await tx
+              .insert(memoryConsolidationState)
+              .values({ botId, groupImpressionsSince: changedAt })
+              .onConflictDoUpdate({
+                target: memoryConsolidationState.botId,
+                set: { groupImpressionsSince: changedAt },
+              });
+            await saveConfig(tx);
+          });
+        } else {
+          await saveConfig(db);
+        }
         return {
           kind: "saved" as const,
           aiConfig: updatedAiConfig,
@@ -1403,6 +1457,64 @@ export function botsRoutes(
         return c.json({ ok: false as const, error: `Failed to fetch models: ${msg}` }, 502);
       }
     })
+    .get("/:botId/memory/review", async (c) => {
+      if (!ownerOrAdmin.has(c.get("authMember").role))
+        return c.json({ ok: false as const, error: "Forbidden" }, 403);
+      const [row] = await db
+        .select({ lastRun: memoryConsolidationState.lastRun })
+        .from(memoryConsolidationState)
+        .where(eq(memoryConsolidationState.botId, c.req.param("botId")))
+        .limit(1);
+      return c.json({ ok: true as const, data: { lastRun: row?.lastRun ?? null } });
+    })
+    .post(
+      "/:botId/memory/review",
+      zValidator(
+        "json",
+        z
+          .object({
+            chatId: z
+              .string()
+              .regex(/^-[1-9]\d*$/)
+              .refine((id) => Number.isSafeInteger(Number(id))),
+            afterMessageId: z.number().int().nonnegative().safe().optional(),
+            start: z.string().datetime({ offset: true }),
+            end: z.string().datetime({ offset: true }),
+          })
+          .refine(
+            (range) => Date.parse(range.start) < Date.parse(range.end),
+            "Invalid review interval",
+          ),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        if (!memoryConsolidationPreview)
+          return c.json({ ok: false as const, error: "Memory review unavailable" }, 503);
+        const { chatId, start, end, afterMessageId } = c.req.valid("json");
+        try {
+          const data = await memoryConsolidationPreview.review(
+            c.req.param("botId"),
+            Number(chatId),
+            new Date(start),
+            new Date(end),
+            afterMessageId,
+          );
+          return c.json({ ok: true as const, data });
+        } catch (error) {
+          if (!(error instanceof MemoryReviewError)) throw error;
+          const code = {
+            409: "review_conflict",
+            429: "review_quota",
+            503: "review_unavailable",
+          } as const;
+          return c.json(
+            { ok: false as const, code: code[error.status], error: error.message },
+            error.status,
+          );
+        }
+      },
+    )
     .get("/:botId/memories/meta", async (c) => {
       const botId = c.req.param("botId");
       const store = botPool.getBotMemoryStore();

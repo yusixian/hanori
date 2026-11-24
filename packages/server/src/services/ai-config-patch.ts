@@ -279,6 +279,30 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     throw new AiConfigPatchError("The conversation compression Provider does not exist");
   }
 
+  let botMemoryConfig = patch.botMemoryConfig ?? current?.botMemoryConfig;
+  const consolidation =
+    patch.botMemoryConfig?.consolidation ?? current?.botMemoryConfig?.consolidation;
+  if (consolidation && botMemoryConfig) {
+    const requestedId = consolidation.providerId;
+    const providerId = requestedId && (providerIdMap.get(requestedId) ?? requestedId);
+    const provider = effectiveProviders.find((item) => item.id === providerId);
+    if (providerId && !provider)
+      throw new AiConfigPatchError("The memory consolidation Provider does not exist");
+    if (
+      consolidation.modelId &&
+      (!provider ||
+        (provider.defaultModel !== consolidation.modelId &&
+          !provider.models?.some((model) => model.id === consolidation.modelId)))
+    )
+      throw new AiConfigPatchError(
+        "The memory consolidation model is not available for the selected Provider",
+      );
+    botMemoryConfig = {
+      ...botMemoryConfig,
+      consolidation: { ...consolidation, ...(providerId ? { providerId } : {}) },
+    };
+  }
+
   const groupOverrides = Object.fromEntries(
     Object.entries(patch.groupOverrides).map(([chatId, incoming]) => {
       const { engagement: engagementPatch, modelRecovery: recoveryPatch, ...rest } = incoming;
@@ -346,7 +370,7 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     taskAgentConfig,
     githubToolsConfig,
     artworkToolsConfig: patch.artworkToolsConfig,
-    botMemoryConfig: patch.botMemoryConfig,
+    botMemoryConfig,
     messageConfig: patch.messageConfig,
     executionConfig: patch.executionConfig
       ? {

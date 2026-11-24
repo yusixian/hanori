@@ -101,3 +101,30 @@ describe("Issue creation confirmation TTL", () => {
     ).toBe(false);
   });
 });
+
+describe("memory consolidation settings", () => {
+  const memory = { enabled: true, maxMemories: 20, autoInjectMemories: true };
+  it("round trips custom consolidation settings and accepts legacy settings", () => {
+    const consolidation = {
+      enabled: true,
+      intervalHours: 12,
+      maxCallsPerRun: 4,
+      retentionDays: 180,
+      groupImpressions: true,
+      providerId: "cheap-provider",
+      modelId: "small",
+    };
+    expect(parse({ botMemoryConfig: memory }).success).toBe(true);
+    expect(
+      parse({ botMemoryConfig: { ...memory, consolidation } }).data?.botMemoryConfig?.consolidation,
+    ).toEqual(consolidation);
+  });
+  it.each([
+    { intervalHours: 0 },
+    { maxCallsPerRun: 33 },
+    { retentionDays: -1 },
+    { providerId: "   " },
+  ])("rejects invalid limits or model settings %j", (consolidation) => {
+    expect(parse({ botMemoryConfig: { ...memory, consolidation } }).success).toBe(false);
+  });
+});

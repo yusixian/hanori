@@ -35,6 +35,7 @@ import {
   index,
   integer,
   json,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -802,6 +803,18 @@ export const memoryConsolidationState = pgTable("memory_consolidation_state", {
     .primaryKey()
     .references(() => bots.id, { onDelete: "cascade" }),
   cursorMessageId: integer("cursor_message_id").notNull().default(0),
+  groupImpressionsSince: timestamp("group_impressions_since")
+    .default(sql`timezone('UTC', now())`)
+    .notNull(),
+  lastScheduledAt: timestamp("last_scheduled_at"),
+  lastRun: jsonb("last_run").$type<{
+    calls: number;
+    changes: number;
+    inputTokens: number;
+    outputTokens: number;
+    finishedAt: string;
+    error?: string;
+  }>(),
   leaseOwner: uuid("lease_owner"),
   leaseUntil: timestamp("lease_until"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -817,6 +830,7 @@ export const memoryConsolidationEvidence = pgTable(
     chatId: bigint("chat_id", { mode: "number" }).notNull(),
     action: text("action").$type<"add" | "update" | "retire" | "ignore">().notNull(),
     memoryId: integer("memory_id").references(() => botMemories.id, { onDelete: "set null" }),
+    reviewVersion: integer("review_version").notNull().default(1),
     sourceMessageIds: integer("source_message_ids").array().notNull(),
     participantIds: bigint("participant_ids", { mode: "number" }).array().notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),

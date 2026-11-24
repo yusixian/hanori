@@ -827,3 +827,62 @@ describe("model recovery configuration", () => {
     expect(result.groupOverrides["-100"]?.modelRecovery?.fallback?.providerId).toBe(id);
   });
 });
+
+describe("memory consolidation model selection", () => {
+  const memory = { enabled: true, autoInjectMemories: true, maxMemories: 20 };
+  const provider = {
+    ...storedProvider,
+    id: "__new_cheap",
+    apiKey: "example-key",
+    defaultModel: "budget",
+    models: [{ id: "budget" }],
+  };
+  it("maps draft provider IDs and preserves settings sent by newer clients", () => {
+    const config = absorb(
+      null,
+      buildPatch({
+        enabled: false,
+        providers: [provider],
+        botMemoryConfig: {
+          ...memory,
+          consolidation: { providerId: provider.id, modelId: "budget", intervalHours: 12 },
+        },
+      }),
+    );
+    expect(config.botMemoryConfig?.consolidation?.providerId).toMatch(UUID_PATTERN);
+    expect(config.botMemoryConfig?.consolidation?.providerId).toBe(config.providers?.[0]?.id);
+    for (const patch of [{}, { botMemoryConfig: memory }]) {
+      expect(absorb(config, buildPatch({ enabled: false, ...patch })).botMemoryConfig).toEqual(
+        config.botMemoryConfig,
+      );
+    }
+    expect(
+      absorb(
+        config,
+        buildPatch({ enabled: false, botMemoryConfig: { ...memory, consolidation: {} } }),
+      ).botMemoryConfig?.consolidation,
+    ).toEqual({});
+  });
+  it("rejects deleting a selected provider and rejects dangling model references", () => {
+    const current = storedConfig({
+      botMemoryConfig: {
+        ...memory,
+        consolidation: { providerId: storedProvider.id, modelId: storedProvider.defaultModel },
+      },
+    });
+    expect(() => absorb(current, buildPatch({ enabled: false, providers: [] }))).toThrow(
+      "memory consolidation Provider",
+    );
+    for (const consolidation of [
+      { modelId: "budget" },
+      { providerId: storedProvider.id, modelId: "not-configured" },
+    ]) {
+      expect(() =>
+        absorb(
+          current,
+          buildPatch({ enabled: false, botMemoryConfig: { ...memory, consolidation } }),
+        ),
+      ).toThrow("memory consolidation model");
+    }
+  });
+});

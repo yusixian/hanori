@@ -2,6 +2,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ModelRecoveryFields, modelRecoveryError } from "./components/model-recovery-fields";
 import { PromptVersions } from "./prompt-versions";
 import { TaskAgentFields } from "./sections/task-agent-fields";
+import { useCanManageBot } from "@/hooks/use-can-manage-bot";
 import { EngagementSection } from "./sections/engagement-section";
 import { Button } from "@/components/ui/button";
 import { useBeforeLogout, type LogoutAction } from "@/components/layout/before-logout";
@@ -175,7 +176,7 @@ export function BotAiSettingsPage() {
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [webSearchApiKey, setWebSearchApiKey] = useState("");
   const [webImageApiKey, setWebImageApiKey] = useState("");
-  const [canManageGitHubCredentials, setCanManageGitHubCredentials] = useState(false);
+  const canManageBot = useCanManageBot();
   const [globalSelection, setGlobalSelection] = useState<GlobalAiSelection | null>(null);
   const [globalSelectionDraft, setGlobalSelectionDraft] = useState<GlobalAiSelectionDraft | null>(
     null,
@@ -349,24 +350,6 @@ export function BotAiSettingsPage() {
     next.set("setting", "github-tools");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, t]);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const response = await authFetch("/api/authz/me");
-        if (!response.ok) return;
-        const body = (await response.json()) as { data?: { member?: { role?: string } } };
-        const role = body.data?.member?.role;
-        if (active) setCanManageGitHubCredentials(role === "owner" || role === "admin");
-      } catch {
-        // Credential operations remain hidden if the role cannot be verified.
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const loadConfig = useCallback(
     async (reportError = true): Promise<boolean> => {
@@ -1468,7 +1451,13 @@ export function BotAiSettingsPage() {
                   description={t("disclosures.botMemory.description")}
                   summary={botMemCfg.enabled ? t("common.enabled") : t("common.disabled")}
                 >
-                  <BotMemorySection config={botMemCfg} onUpdate={updateBotMemory} />
+                  <BotMemorySection
+                    canManage={canManageBot}
+                    botId={botId!}
+                    providers={config.providers}
+                    config={botMemCfg}
+                    onUpdate={updateBotMemory}
+                  />
                 </SettingsDisclosureRow>
                 <SettingsDisclosureRow
                   {...disclosureProps("embeddings")}
@@ -1538,7 +1527,7 @@ export function BotAiSettingsPage() {
                 >
                   <GitHubToolsSection
                     botId={botId!}
-                    canManageCredentials={canManageGitHubCredentials}
+                    canManageCredentials={canManageBot}
                     authorizationBlocked={isDirty || !config.githubToolsConfig}
                     providers={config.providers ?? []}
                     providerApiKeyDrafts={providerApiKeys}

@@ -290,6 +290,17 @@ export const aiConfigSchema = z
         enabled: z.boolean(),
         maxMemories: z.number().min(1).max(100),
         autoInjectMemories: z.boolean(),
+        consolidation: z
+          .object({
+            enabled: z.boolean().optional(),
+            intervalHours: z.number().int().min(1).max(168).optional(),
+            maxCallsPerRun: z.number().int().min(1).max(32).optional(),
+            groupImpressions: z.boolean().optional(),
+            retentionDays: z.number().int().min(1).max(365).optional(),
+            providerId: z.string().trim().min(1).max(256).optional(),
+            modelId: z.string().trim().min(1).max(256).optional(),
+          })
+          .optional(),
       })
       .optional(),
     messageConfig: z

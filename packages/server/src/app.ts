@@ -310,6 +310,7 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/engagement-samples", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/engagement-samples/*", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/files-raw/generations/*", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/memory/review", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/memories/consolidation-preview", requireRoles(ownerOrAdmin))
     .route(
       "/api/bots",

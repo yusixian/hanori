@@ -139,7 +139,25 @@ export interface BotMemory {
   updatedAt: string;
 }
 
+export interface MemoryConsolidationConfig {
+  enabled?: boolean;
+  intervalHours?: number;
+  maxCallsPerRun?: number;
+  groupImpressions?: boolean;
+  retentionDays?: number;
+  providerId?: string;
+  modelId?: string;
+}
+
+export const DEFAULT_MEMORY_CONSOLIDATION_CONFIG = {
+  enabled: true,
+  groupImpressions: true,
+  intervalHours: 12,
+  maxCallsPerRun: 4,
+} as const satisfies MemoryConsolidationConfig;
+
 export interface BotMemoryConfig {
+  consolidation?: MemoryConsolidationConfig;
   enabled: boolean;
   maxMemories: number;
   autoInjectMemories: boolean;

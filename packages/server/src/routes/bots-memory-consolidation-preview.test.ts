@@ -14,7 +14,7 @@ vi.hoisted(() => {
 });
 
 const previewHistoricalBatches = vi.fn();
-const previewPort: MemoryConsolidationPreviewPort = { previewHistoricalBatches };
+const previewPort: MemoryConsolidationPreviewPort = { previewHistoricalBatches, review: vi.fn() };
 
 function appForRole(role: string) {
   return new Hono<{ Variables: AuthVariables }>()
@@ -98,5 +98,46 @@ describe("historical memory consolidation preview route", () => {
       expect(response.status, query).toBe(400);
     }
     expect(previewHistoricalBatches).not.toHaveBeenCalled();
+  });
+});
+
+describe("group memory review", () => {
+  const body = { chatId: "-123", start: "2026-01-01T00:00:00Z", end: "2026-01-08T00:00:00Z" };
+  const review = (role: string, parameters = body) =>
+    appForRole(role).request("/bots/bot-a/memory/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(parameters),
+    });
+
+  it("validates the group and interval before invoking the owner-only or admin-only operation", async () => {
+    vi.clearAllMocks();
+    expect((await review("editor")).status).toBe(403);
+    expect((await appForRole("viewer").request("/bots/bot-a/memory/review")).status).toBe(403);
+    for (const invalid of [
+      { chatId: "123" },
+      { chatId: "-9007199254740992" },
+      { end: body.start },
+    ]) {
+      expect((await review("admin", { ...body, ...invalid })).status).toBe(400);
+    }
+    expect(previewPort.review).not.toHaveBeenCalled();
+    const result = {
+      nextAfterMessageId: null,
+      calls: 1,
+      changes: 0,
+      inputTokens: 100,
+      outputTokens: 5,
+    };
+    vi.mocked(previewPort.review).mockResolvedValue(result);
+    const response = await review("admin");
+    expect(await response.json()).toEqual({ ok: true, data: result });
+    expect(previewPort.review).toHaveBeenCalledWith(
+      "bot-a",
+      -123,
+      new Date(body.start),
+      new Date(body.end),
+      undefined,
+    );
   });
 });

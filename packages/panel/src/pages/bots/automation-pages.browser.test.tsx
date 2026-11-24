@@ -18,7 +18,10 @@ const collection = {
 };
 const summary = {
   id: 1,
+  botId: "test-id",
   chatId: -100123,
+  windowStart: "2026-09-30T08:00:00Z",
+  windowEnd: "2026-10-01T08:00:00Z",
   trigger: "manual",
   content: "A quiet afternoon with Hanori.\nWe shared a few ideas for our next drawing.",
   createdAt: "2026-10-01T08:00:00Z",
@@ -51,6 +54,12 @@ beforeEach(async () => {
       return rssFailed
         ? json({ ok: false }, 503)
         : json({ ok: true, data: populated ? [collection] : [] });
+    if (url.pathname === "/api/authz/me") return json({ data: { member: { role: "admin" } } });
+    if (url.pathname.endsWith("/memory/review"))
+      return json({
+        ok: true,
+        data: { calls: 1, changes: 1, inputTokens: 12, outputTokens: 5, nextAfterMessageId: null },
+      });
     if (url.pathname.endsWith("/summary/configs")) return json({ ok: true, data: [] });
     if (url.pathname.endsWith("/summary/history"))
       return historyFailed
@@ -164,6 +173,19 @@ test("reads a summary in a modal and restores focus when Escape closes it", asyn
   await expect.element(dialog).toHaveTextContent("A quiet afternoon with Hanori.");
   await expect.element(page.getByRole("button", { name: "Close", exact: true })).toHaveFocus();
   await userEvent.tab();
+  await page.getByRole("button", { name: "Review this group during the summary period" }).click();
+  await expect.element(page.getByRole("status")).toHaveTextContent("Input tokens 12");
+  expect(requestMock).toHaveBeenCalledWith(
+    expect.stringContaining("/bots/test-id/memory/review"),
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        chatId: "-100123",
+        start: summary.windowStart,
+        end: summary.windowEnd,
+      }),
+    }),
+  );
   // Native dialogs may let Tab reach browser chrome, but the page behind stays inert.
   view.element().focus();
   await expect.element(view).not.toHaveFocus();
