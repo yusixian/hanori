@@ -1,0 +1,84 @@
+---
+title: HTTPS 反向代理
+description: 使用 Caddy 或 Nginx 为 Hanori 配置 HTTPS，验证面板登录、回调与 Telegram Mini App。
+---
+
+Caddy 和 Nginx 都可以把同一个公开 HTTPS 域名上的面板、API、文档和 Mini App 请求转发给 Hanori。示例使用 `bot.example.com`，配置时将其替换为自己的域名，并将 DNS 指向代理服务器。
+
+## 准备上游地址
+
+模板适用于代理直接接收公网流量、运行在 Hanori 宿主机上的部署。代理监听 TCP 80 和 443，Hanori 通过 `http://127.0.0.1:43100` 提供上游服务。
+
+按 [Docker 部署指南](/docs/self-hosting/docker)准备环境文件和服务。如果代理运行在宿主机上，在项目根目录创建 `compose.reverse-proxy.yml`，仅向宿主机回环地址发布 app 的容器端口。
+
+```yaml
+services:
+  app:
+    ports:
+      - "127.0.0.1:43100:3000"
+```
+
+使用基础 Compose 文件与这份覆盖文件启动。已有实例沿用原 Compose 项目名，并用这份覆盖文件替换 `docker-compose.direct.yml`。
+
+```bash
+docker compose -p cos-bot-prod -f docker-compose.yml -f compose.reverse-proxy.yml up -d --build
+```
+
+如果代理也在容器中，将它与 app 接入同一个 Docker 网络，再把上游地址改为 `http://app:3000`。这种部署可以省略宿主机端口映射。
+
+## 配置公开地址
+
+在首次启动前设置以下变量。修改已有实例时，重新创建 app 容器或重启源码进程，让新环境变量生效。
+
+```dotenv
+BETTER_AUTH_URL=https://bot.example.com
+```
+
+只填写浏览器实际访问的 origin，包含 `https://` 和域名。OAuth 回调继续使用各集成要求的路径。例如，启用了 Google 登录时，在 Google OAuth 客户端中登记 `https://bot.example.com/api/auth/callback/google`。
+
+## Caddy
+
+将源码中的 `examples/reverse-proxy/Caddyfile` 站点块加入 Caddy 的生效配置。核对域名和上游端口，放行 TCP 80 和 443。Caddy 使用公开域名自动申请和续期证书，并把 HTTP 重定向至 HTTPS。配置中的定时探测检查 `/api/health`，部署是否就绪仍以公开地址上的 `/api/health/ready` 为准。[Caddy 自动 HTTPS](https://caddyserver.com/docs/automatic-https)
+
+校验配置后，启动或重载服务。
+
+```bash
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+## Nginx
+
+为域名准备受客户端信任的证书链和私钥，并配置证书续期后的 Nginx 重载。将源码中的 `examples/reverse-proxy/nginx.conf` 放入主配置的 `http {}` 已加载目录，例如 `/etc/nginx/conf.d/hanori.conf`。替换域名和证书路径，执行 `nginx -t` 后启动或重载服务。
+
+模板保留公开 Host 和协议，原样转发请求路径，并关闭代理响应缓冲与缓存。SSE 可逐条送达，`proxy_read_timeout 300s` 是上游两次读取之间的等待上限。上传请求的默认上限为 64 MiB，应用自身的限制仍然生效。[Nginx 代理参数](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
+
+## 验证 HTTPS 和 Mini App
+
+在代理宿主机检查上游，然后从外部网络检查公开 HTTPS 地址。
+
+```bash
+curl -fsS http://127.0.0.1:43100/api/health/ready
+curl -fsS https://bot.example.com/api/health/ready
+```
+
+两次请求都应返回 HTTP 200，JSON 中应有 `ok: true`、`status: "ready"` 和相同的预期版本。随后从公开域名登录面板，并实际走一遍已配置的 OAuth 流程。
+
+Telegram Mini App 使用受信任的 HTTPS 证书和同一公开 origin。例如，BotFather 菜单按钮可指向 `https://bot.example.com/mini-app/<botId>/help`，其中 `<botId>` 使用面板里的 Bot ID。代理应保留 `Origin`、`Cookie` 和 `Set-Cookie`，沿用 Hanori 的 CSP 与嵌入策略，避免给 Mini App 全局追加 `X-Frame-Options: DENY`。对 `/api/mini-app/*` 保持不缓存。最后从真实 Telegram WebView 打开 Bot 的 Mini App，并检查一个当前账号有权访问的受保护页面。[Hanori Mini App 指南](/docs/guides/mini-app) · [Telegram Mini Apps](https://core.telegram.org/bots/webapps)
+
+## 常见问题
+
+### 公开地址返回 502 或 503
+
+先请求上游的 `/api/health/ready`。如果连接失败，检查 app 是否启动、宿主机端口映射是否正确，或者代理容器能否访问 `app:3000`。如果收到应用返回的 503 JSON，检查 app 日志里的数据库连接、迁移和启动状态。如果上游 ready 正常而公开地址失败，检查生效的代理配置、上游地址和代理错误日志。
+
+### OAuth 回调使用了 HTTP 或错误域名
+
+检查运行中的 `BETTER_AUTH_URL`、浏览器地址和供应商登记的回调 URI。确认 TLS 终止代理向 Hanori 转发公开 Host 和 `X-Forwarded-Proto: https`。如果还有 CDN 或负载均衡器，按其可信代理配置保留最外层的公开协议和域名，再重试登录。
+
+### Mini App 能打开，受保护页面无法登录
+
+通过 Telegram 内的 Bot 菜单重新打开，确认菜单地址与 `BETTER_AUTH_URL` 同源。检查浏览器是否接受证书链、代理是否保留会话 Cookie，以及响应是否被额外的缓存或安全头规则改写。仍有签名或权限错误时，检查对应 Bot 是否启用 Mini App，以及当前 Telegram 账号是否有访问权限。
+
+### Nginx 返回 413 或 SSE 断流
+
+413 表示请求体超过某一层的限制。检查 `client_max_body_size` 与应用接口上限。SSE 事件成批到达时检查各层代理的缓冲设置，连接在空闲后断开时检查各层的读取超时。

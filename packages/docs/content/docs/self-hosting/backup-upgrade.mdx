@@ -80,7 +80,7 @@ node scripts/preserve-upgrade-env.mjs \
 按顺序检查：
 
 1. `docker compose ps` 中 app、db 与启用的 worker 均正常；
-2. `/api/health` 与 `/api/health/ready` 返回成功及预期版本 SHA；
+2. `/api/health` 与 `/api/health/ready` 返回成功及预期版本 SHA。使用[反向代理](/docs/self-hosting/reverse-proxy)时，再从公开 HTTPS 域名请求 ready 端点，核对状态和版本；
 3. 面板登录正常，Bot 列表与设置可读写；
 4. Telegram `/help`、一次普通 AI 回复和 `/status` 正常；
 5. 最新迁移已应用，备份页能看到历史记录；

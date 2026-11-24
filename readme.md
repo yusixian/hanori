@@ -5,7 +5,7 @@
 支持多 Bot 管理、AI 对话与记忆、群聊自然接话、图片与贴纸生成、RSS / 定时提醒、插件与 MCP 工具接入，以及配套的 Web 管理面板和 Telegram Mini App。
 
 - 在线文档：[bot.cosine.ren/docs](https://bot.cosine.ren/docs)
-- 仓库内阅读：[文档首页](packages/docs/content/docs/index.mdx) · [快速开始](packages/docs/content/docs/getting-started/quickstart.mdx) · [自托管](packages/docs/content/docs/self-hosting/index.mdx) · [更新日志](docs/releases)
+- 仓库内阅读：[仓库文档索引](docs/README.md) · [文档首页](packages/docs/content/docs/index.mdx) · [快速开始](packages/docs/content/docs/getting-started/quickstart.mdx) · [自托管](packages/docs/content/docs/self-hosting/index.mdx) · [更新日志](docs/releases)
 
 ## 快速部署（Docker）
 

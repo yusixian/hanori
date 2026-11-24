@@ -40,6 +40,6 @@ Hanori 是 pnpm monorepo 应用，包含 Telegram Bot、Hono 服务端、React �
 
 1. 按[配置说明](/docs/self-hosting/configuration)生成并保存密钥。
 2. 按[Docker 部署](/docs/self-hosting/docker)启动最小服务（server、panel 与数据库）。
-3. 检查 `/api/health` 与 `/api/health/ready`，通过后再登录面板。
+3. 按 [HTTPS 反向代理](/docs/self-hosting/reverse-proxy)接入公开域名，检查 `/api/health` 与 `/api/health/ready`，通过后再登录面板。
 4. 添加 Bot、Provider 和备份策略，最后启用可选集成。
 5. 后续升级与迁移按[备份与升级](/docs/self-hosting/backup-upgrade)执行。
