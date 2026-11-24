@@ -1,0 +1,43 @@
+name: Self-hosting help
+description: Ask for help with installation, upgrades, reverse proxies or optional services.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the [self-hosting guides](https://bot.cosine.ren/docs/self-hosting/). Redact credentials and personal data from all output. Keep .env files, Bot Tokens, connection strings, cookies and Telegram initData private.
+  - type: input
+    id: version
+    attributes:
+      label: Version and commit SHA
+      description: Include the release or image tag and the full commit SHA when known.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Deployment environment
+      description: Include the deployment method, enabled Compose profiles, output of `docker --version` and `docker compose version`, and reverse proxy type (Caddy, Nginx, Dokploy/Traefik or none). Mark fields that do not apply.
+    validations:
+      required: true
+  - type: textarea
+    id: symptoms
+    attributes:
+      label: Symptoms and steps already tried
+      description: Say when the issue started and what changed. Include the relevant redacted error or log excerpt.
+    validations:
+      required: true
+  - type: textarea
+    id: environment_check
+    attributes:
+      label: Environment check
+      description: Paste the redacted result of `pnpm deploy:env:check` (use `--file` for a different env file and `--mode local` when running from source outside Docker), or say why you could not run it.
+    validations:
+      required: true
+  - type: textarea
+    id: readiness
+    attributes:
+      label: Readiness status
+      description: Include the HTTP status and redacted response from `/api/health/ready` at the public URL and from the upstream if reachable. If it is unreachable, share the connection error.
+    validations:
+      required: true

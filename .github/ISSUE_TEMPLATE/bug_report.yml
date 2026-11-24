@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible problem with Hanori.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues before posting. For security vulnerabilities, follow the [security reporting policy](https://github.com/yusixian/hanori/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Version and commit SHA
+      description: Include the release tag or image tag and the full commit SHA if available. On a running deployment, check the version field of `/api/health/ready`.
+      placeholder: "vX.Y.Z, commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment method
+      options:
+        - Docker Compose with prebuilt images
+        - Docker Compose built from source
+        - Dokploy
+        - Local development from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the affected page or command and the smallest set of steps that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Describe what you expected and what happened, including any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or screenshots
+      description: Share only relevant excerpts. Remove tokens, API keys, cookies, authorization headers, Telegram initData, message content and identifiers. Keep .env files and raw Telegram updates private.

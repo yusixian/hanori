@@ -5,6 +5,7 @@
 公开文档由 Hanori 在 `/docs/` 提供。以下链接指向相应的源码页面。
 
 - 部署与环境变量见[自托管总览](../packages/docs/content/docs/self-hosting/index.mdx)、[Docker 部署](../packages/docs/content/docs/self-hosting/docker.mdx)和[配置说明](../packages/docs/content/docs/self-hosting/configuration.mdx)。
+- 部署拓扑和 worker 隔离边界见[系统架构](../packages/docs/content/docs/self-hosting/architecture.mdx)。启动、密钥和网络问题见[自托管排障 FAQ](../packages/docs/content/docs/self-hosting/troubleshooting.mdx)。
 - 配置 HTTPS、回调和 Mini App 域名时，查看 [HTTPS 反向代理](../packages/docs/content/docs/self-hosting/reverse-proxy.mdx)、[Caddy 与 Nginx 模板](../examples/reverse-proxy/)和 [Telegram Mini App](../packages/docs/content/docs/guides/mini-app.mdx)。
 - 准备升级或恢复时，查看[备份与升级](../packages/docs/content/docs/self-hosting/backup-upgrade.mdx)和[版本发布说明](releases/)。
 - 外部服务与扩展的配置见 [GitHub 与 Pi](../packages/docs/content/docs/integrations/github-pi.mdx)、[MCP](../packages/docs/content/docs/integrations/mcp.mdx)、[Telegram 链接读取](../packages/docs/content/docs/integrations/telegram-reader.mdx)和[插件开发](../packages/docs/content/docs/integrations/plugin-development.mdx)。
