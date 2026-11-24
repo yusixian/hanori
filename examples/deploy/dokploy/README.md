@@ -3,7 +3,7 @@
 创建 **Docker Compose** 资源，使用以下任一版本的 Compose：
 
 - **从源码构建**：选择 Hanori Git 仓库与目标分支或标签，Compose 路径使用根目录的 [`docker-compose.yml`](../../../docker-compose.yml)。保持 Advanced Command 为默认的 `up -d --build --remove-orphans`。已有实例迁移按[迁移部署教程](../../../docs/DOKPLOY_DEPLOYMENT.md)执行。
-- **使用预构建镜像**：取与目标镜像标签对应的 [`docker-compose.prebuilt.yml`](../../../docker-compose.prebuilt.yml)，删除 `app.ports`，保留 `app.expose` 和 `app.labels`，再粘贴到 Dokploy 的 Raw Compose 源。将 `HANORI_IMAGE_TAG` 设为已发布的镜像标签（例如候选版 `v0.29.1-rc.1`），私有镜像需配置仓库认证。[预构建镜像说明](../../../packages/docs/content/docs/self-hosting/docker.mdx#使用-ghcr-预构建镜像)
+- **使用预构建镜像**：取与目标镜像标签对应的 [`docker-compose.prebuilt.yml`](../../../docker-compose.prebuilt.yml)，删除 `app.ports`，保留 `app.expose` 和 `app.labels`，再粘贴到 Dokploy 的 Raw Compose 源。将 `HANORI_IMAGE_TAG` 设为已发布的镜像标签（例如 `v0.29.1`），私有镜像需配置仓库认证。[预构建镜像说明](../../../packages/docs/content/docs/self-hosting/docker.mdx#使用-ghcr-预构建镜像)
 
 在环境变量页，参照[环境模板](../../../.env.selfhost.example)配置 owner 邮箱、HTTPS origin 和初始凭据。用 `openssl rand -hex 32` 分别生成 `DB_PASSWORD`、`BETTER_AUTH_SECRET`、`ENCRYPTION_KEY`、`MINI_APP_SESSION_SECRET` 和 `PANEL_PASSWORD`。升级时保留原项目、数据卷、数据库密码和加密密钥。
 
