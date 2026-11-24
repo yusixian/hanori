@@ -651,6 +651,7 @@ export const aiSettings = {
     appConnectionTitle: "GitHub App 授权",
     appConnectionDescription: "由管理面板管理员连接 GitHub，并在 GitHub 中控制可访问的账号与仓库。",
     connectGitHub: "连接 GitHub",
+    refreshAuthorization: "同步授权仓库",
     modifyAuthorization: "修改授权",
     disconnect: "断开连接",
     disconnectConfirm:

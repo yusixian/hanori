@@ -705,6 +705,7 @@ export const aiSettings = {
     appConnectionDescription:
       "A panel administrator connects GitHub, then controls the accessible account and repositories on GitHub.",
     connectGitHub: "Connect GitHub",
+    refreshAuthorization: "Sync authorized repositories",
     modifyAuthorization: "Modify authorization",
     disconnect: "Disconnect",
     disconnectConfirm:

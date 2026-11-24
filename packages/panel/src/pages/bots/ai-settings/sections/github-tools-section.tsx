@@ -190,7 +190,7 @@ export function GitHubToolsSection({
   const { t } = useTranslation("aiSettings");
   const [appStatus, setAppStatus] = useState<GitHubAppStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(canManageCredentials);
-  const [operation, setOperation] = useState<"authorize" | "disconnect" | null>(null);
+  const [operation, setOperation] = useState<"authorize" | "refresh" | "disconnect" | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [createIssueConfirmationMinutesDraft, setCreateIssueConfirmationMinutesDraft] = useState(
     () => String(config.createIssueConfirmationTtlMinutes ?? 10),
@@ -257,12 +257,12 @@ export function GitHubToolsSection({
     setCreateIssueConfirmationMinutesDraft(String(config.createIssueConfirmationTtlMinutes ?? 10));
   }, [config.createIssueConfirmationTtlMinutes]);
 
-  const authorize = async () => {
-    setOperation("authorize");
+  const authorize = async (refresh = false) => {
+    setOperation(refresh ? "refresh" : "authorize");
     setConnectionError("");
     try {
       const response = await authFetch(
-        `/api/bots/${encodeURIComponent(botId)}/github-app/authorize`,
+        `/api/bots/${encodeURIComponent(botId)}/github-app/authorize${refresh ? "?refresh=1" : ""}`,
         { method: "POST" },
       );
       if (!response.ok) {
@@ -354,6 +354,22 @@ export function GitHubToolsSection({
                   ? t("githubTools.modifyAuthorization")
                   : t("githubTools.connectGitHub")}
               </Button>
+              {appStatus?.connected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={
+                    statusLoading ||
+                    operation !== null ||
+                    !appStatus.available ||
+                    authorizationBlocked
+                  }
+                  onClick={() => void authorize(true)}
+                >
+                  {t("githubTools.refreshAuthorization")}
+                </Button>
+              )}
               {appStatus?.connected && (
                 <Button
                   type="button"
