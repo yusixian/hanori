@@ -317,6 +317,7 @@ services:
         max-file: "2"
 
   nsfw-api:
+    profiles: ["nsfw"]
     image: ${NSFW_API_IMAGE:-ghcr.io/arnidan/nsfw-api:latest}
     expose:
       - "3000"

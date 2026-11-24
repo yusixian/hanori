@@ -32,7 +32,7 @@ docker compose version
 openssl version
 ```
 
-如果命令不存在，请先按照 [Docker 官方安装文档](https://docs.docker.com/engine/install/) 安装 Docker Engine 和 Compose 插件。云服务器还需要在防火墙或安全组中放行面板端口，默认使用 `9600`。
+如果命令不存在，请先按照 [Docker 官方安装文档](https://docs.docker.com/engine/install/) 安装 Docker Engine 和 Compose 插件。云服务器还需要在防火墙或安全组中放行面板端口，默认使用 `43100`。
 
 ### 2. 下载项目
 
@@ -80,11 +80,11 @@ nano .env
 DB_PASSWORD=生成的DB_PASSWORD
 
 # 面板映射到服务器的端口
-PORT=9600
+PORT=43100
 
 # 登录配置
 BETTER_AUTH_SECRET=生成的BETTER_AUTH_SECRET
-BETTER_AUTH_URL=http://服务器公网IP:9600
+BETTER_AUTH_URL=http://服务器公网IP:43100
 AUTH_OWNER_EMAIL=你的登录邮箱
 PANEL_PASSWORD=生成的PANEL_PASSWORD
 
@@ -114,7 +114,7 @@ CODING_WORKER_SECRET=
 
 - 四个生成值要填写到对应的同名配置中，不要互换。
 - 已经保存数据后，不要修改 `DB_PASSWORD` 或 `ENCRYPTION_KEY`。
-- `http://服务器公网IP:9600` 只适合临时测试，并且要把“服务器公网 IP”替换成真实 IP。长期使用应配置域名和 HTTPS，把 `BETTER_AUTH_URL` 改为真实地址，例如 `https://bot.example.com`，不能带结尾 `/`。
+- `http://服务器公网IP:43100` 只适合临时测试，并且要把“服务器公网 IP”替换成真实 IP。长期使用应配置域名和 HTTPS，把 `BETTER_AUTH_URL` 改为真实地址，例如 `https://bot.example.com`，不能带结尾 `/`。
 - `.env` 包含密码，不能发到群聊、不能提交到 Git。
 
 在 nano 中按 `Ctrl+O`、回车保存，再按 `Ctrl+X` 退出。
@@ -160,7 +160,7 @@ docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.ym
 ```bash
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml ps
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml logs --tail=200 app
-curl -fsS http://127.0.0.1:9600/api/health && echo
+curl -fsS http://127.0.0.1:43100/api/health && echo
 ```
 
 正常情况：
@@ -170,7 +170,7 @@ curl -fsS http://127.0.0.1:9600/api/health && echo
 - 日志出现 `Database migrated`、`Authentication initialized` 和 `Server running`。
 - 健康检查返回 `{"ok":true}`。
 
-如果 `nsfw-api` 暂时显示 `unhealthy`，但 `app`、`db` 和健康检查正常，不会影响这次应用和数据库部署。
+需要图片分类时将 `nsfw` 加入 `COMPOSE_PROFILES` 后重新部署。默认不启动分类器，Bot 仍可发送带遮罩的照片。
 
 ### 5. 首次登录
 
@@ -255,7 +255,7 @@ docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.ym
 检查接口：
 
 ```bash
-curl -fsS http://127.0.0.1:9600/api/health && echo
+curl -fsS http://127.0.0.1:43100/api/health && echo
 ```
 
 重启 app，不动数据库：

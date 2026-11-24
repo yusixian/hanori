@@ -202,7 +202,7 @@ BETTER_AUTH_URL=https://bot.example.com
 AUTH_OWNER_EMAIL=owner@example.com
 PANEL_PASSWORD=首次迁移时的初始密码
 ENCRYPTION_KEY=一个稳定的随机密钥
-PORT=9600
+PORT=43100
 ```
 
 `BETTER_AUTH_URL` 必须是用户实际访问面板的地址，而不是容器内的 `http://localhost:3000`。Google OAuth 和安全 cookie 都依赖这个值。

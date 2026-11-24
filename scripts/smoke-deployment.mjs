@@ -51,7 +51,7 @@ export function assertSmokeConfig(config, project) {
   const names = Object.keys(config.services ?? {})
     .sort()
     .join();
-  if (names !== "app,db,db-backup,nsfw-api,quote-worker") fail();
+  if (names !== "app,db,db-backup,quote-worker") fail();
   for (const [name, service] of Object.entries(config.services)) {
     if (
       service.ports?.length ||
@@ -360,16 +360,8 @@ export async function main(args = process.argv.slice(2)) {
   try {
     const envPath = join(directory, "initial.env");
     await command(
-      process.execPath,
-      [
-        join(root, "scripts/init-env.mjs"),
-        "--email",
-        "smoke@example.test",
-        "--url",
-        "http://localhost:3000",
-        "--output",
-        envPath,
-      ],
+      join(root, "scripts/init-env.sh"),
+      ["--email", "smoke@example.test", "--url", "http://localhost:3000", "--output", envPath],
       environment,
     );
     const initial = await readFile(envPath, "utf8");

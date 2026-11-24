@@ -7,16 +7,16 @@ description: 环境变量分类参考、密钥轮换规则与可选服务配置�
 
 ## 数据库和服务
 
-| 变量                 | 用途                                                                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`       | PostgreSQL 连接字符串                                                                                                   |
-| `DB_PASSWORD`        | Docker Compose 数据库密码                                                                                               |
-| `PORT`               | 容器内固定监听 `3000`；`docker-compose.direct.yml` 下作为宿主机映射端口（`.env.example` 填 `43100`，未设时默认 `9600`） |
-| `BACKUP_DIR`         | 本地备份目录，未设时用应用默认目录                                                                                      |
-| `BETTER_AUTH_URL`    | 生产公开 HTTPS origin，不带末尾 `/` 或路径                                                                              |
-| `BETTER_AUTH_SECRET` | Better Auth 会话与加密密钥（至少 32 位随机值）；更换会使已有会话失效                                                    |
-| `AUTH_OWNER_EMAIL`   | 首次启动创建 owner 的邮箱                                                                                               |
-| `PANEL_PASSWORD`     | 首次 bootstrap 密码；登录改密后删除                                                                                     |
+| 变量                 | 用途                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `DATABASE_URL`       | PostgreSQL 连接字符串                                                                   |
+| `DB_PASSWORD`        | Docker Compose 数据库密码                                                               |
+| `PORT`               | 容器内固定监听 `3000`；`docker-compose.direct.yml` 下作为宿主机映射端口（默认 `43100`） |
+| `BACKUP_DIR`         | 本地备份目录，未设时用应用默认目录                                                      |
+| `BETTER_AUTH_URL`    | 生产公开 HTTPS origin，不带末尾 `/` 或路径                                              |
+| `BETTER_AUTH_SECRET` | Better Auth 会话与加密密钥（至少 32 位随机值）；更换会使已有会话失效                    |
+| `AUTH_OWNER_EMAIL`   | 首次启动创建 owner 的邮箱                                                               |
+| `PANEL_PASSWORD`     | 首次 bootstrap 密码；登录改密后删除                                                     |
 
 ## 本地 Mini App 域名
 
@@ -33,22 +33,22 @@ description: 环境变量分类参考、密钥轮换规则与可选服务配置�
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 可选 Google OAuth，须成对配置                             |
 
 - **必填 `ENCRYPTION_KEY`**：含本地开发在内的所有环境都必须设置非空值，缺失会拒绝启动。应用按原值派生密钥，首尾空格也计入其中。
-  - 全新 Docker 实例：按[Docker 部署](/docs/self-hosting/docker)运行 `pnpm setup:env --email owner@example.com --url https://bot.example.com` 生成；
+  - 全新 Docker 实例：按[Docker 部署](/docs/self-hosting/docker)运行 `./scripts/init-env.sh --email owner@example.com --url https://bot.example.com` 生成；
   - 本地开发：复制 `.env.example` 后用 `openssl rand -hex 32` 生成；
   - 已有数据的实例：严禁替换密钥，旧版未显式配置时先按[备份与升级](/docs/self-hosting/backup-upgrade)离线恢复原值。
 - `MINI_APP_SESSION_SECRET` 应独立于 `BETTER_AUTH_SECRET` 与 `BOT_TOKEN`，轮换会使现有 Mini App 会话失效。
 
 ## AI、媒体和清理
 
-| 变量                                                              | 用途                                                                                                                        |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `EMBEDDING_DIMENSIONS`                                            | Embedding 维度，默认 `3072`；修改后须同步迁移并重建索引                                                                     |
-| `NSFW_API_URL`                                                    | 图片安全检测服务基址（支持 `POST /classify` multipart `image`）；未配置或失败时保守加罩。Docker 默认 `http://nsfw-api:3000` |
-| `LOG_RETENTION_DAYS`                                              | 普通日志保留天数                                                                                                            |
-| `LOG_RETENTION_DAYS_ERROR`                                        | 错误日志保留天数                                                                                                            |
-| `LOG_CLEANUP_INTERVAL_HOURS`                                      | 日志清理间隔                                                                                                                |
-| `GENERATION_RETENTION_DAYS`                                       | 生图记录与文件默认保留天数                                                                                                  |
-| `PIXAI_MCP_URL` / `OPENAI_IMAGE_MCP_URL` / `GEMINI_IMAGE_MCP_URL` | 旧部署兼容用的图片 MCP 完整地址；一旦在面板保存图片 MCP 平台地址即停用                                                      |
+| 变量                                                              | 用途                                                                                                                                                 |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EMBEDDING_DIMENSIONS`                                            | Embedding 维度，默认 `3072`；修改后须同步迁移并重建索引                                                                                              |
+| `NSFW_API_URL`                                                    | 图片安全检测服务基址（支持 `POST /classify` multipart `image`）；未配置或失败时保守加罩。启用 `nsfw` profile 后可使用内置服务 `http://nsfw-api:3000` |
+| `LOG_RETENTION_DAYS`                                              | 普通日志保留天数                                                                                                                                     |
+| `LOG_RETENTION_DAYS_ERROR`                                        | 错误日志保留天数                                                                                                                                     |
+| `LOG_CLEANUP_INTERVAL_HOURS`                                      | 日志清理间隔                                                                                                                                         |
+| `GENERATION_RETENTION_DAYS`                                       | 生图记录与文件默认保留天数                                                                                                                           |
+| `PIXAI_MCP_URL` / `OPENAI_IMAGE_MCP_URL` / `GEMINI_IMAGE_MCP_URL` | 旧部署兼容用的图片 MCP 完整地址；一旦在面板保存图片 MCP 平台地址即停用                                                                               |
 
 ### Embedding 校验与历史回填
 
@@ -60,7 +60,7 @@ description: 环境变量分类参考、密钥轮换规则与可选服务配置�
 `NSFW_API_URL` 填基础地址（不带 `/classify`）。所有生图供应商共用同一流程，按 `porn + hentai + sexy` 对比阈值（默认 `0.5`）。相册逐张检测，任一张超阈值则整组加罩；调用方主动要求的 spoiler 会保留。
 
 - **本地 Node.js 开发**：先启检测容器 `docker compose -p cos-bot-dev -f docker-compose.dev.yml up -d nsfw-api`，在根目录 `.env` 设 `NSFW_API_URL=http://localhost:43106`（改了 `NSFW_API_PORT` 需同步调整）并重启。
-- **Docker Compose / Dokploy**：设为 `NSFW_API_URL=http://nsfw-api:3000`。若从 `.env.example` 复制过配置，务必覆盖其中的 `localhost:43106`（容器内 `localhost` 指向应用自身）。修改后需重建容器或重新部署生效。
+- **Docker Compose / Dokploy**：将 `nsfw` 加入 `COMPOSE_PROFILES`，并设 `NSFW_API_URL=http://nsfw-api:3000`。分类器仅在 Compose 网络内提供服务。若从 `.env.example` 复制过配置，务必覆盖其中的 `localhost:43106`（容器内 `localhost` 指向应用自身）。修改后需重建容器或重新部署生效。
 - **排查全部被遮罩**：先检查实际运行环境里的变量与连通性；未配置、超时、HTTP 错误或响应无效都会触发保守加罩（不等同于判定为 NSFW）。测试接口：
   ```bash
   curl --fail --max-time 15 -F 'image=@/path/to/test.jpg' http://localhost:43106/classify

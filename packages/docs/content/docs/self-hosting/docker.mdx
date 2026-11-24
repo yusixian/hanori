@@ -5,7 +5,7 @@ description: 用 Docker Compose 启动服务、执行健康检查并安全更新
 
 ## 使用 GHCR 预构建镜像
 
-从已发布镜像对应的 Git 标签下载仓库根目录的 `docker-compose.prebuilt.yml` 和 `.env.example`，放在同一目录。参考第 1 节准备环境，按第 2 节的方式 A 创建 `.env`，将 `NSFW_API_URL` 设为 `http://nsfw-api:3000`。
+从已发布镜像对应的 Git 标签下载仓库根目录的 `docker-compose.prebuilt.yml` 和 `.env.example`，放在同一目录。参考第 1 节准备环境，按第 2 节的方式 A 创建 `.env`。如需内置图片分类，将 `nsfw` 加入 `COMPOSE_PROFILES`，并设置 `NSFW_API_URL=http://nsfw-api:3000`。
 
 将 `HANORI_IMAGE_TAG` 设为完整版本标签（含 `v`），也可使用默认值 `latest`。使用其他镜像仓库时，将 `HANORI_IMAGE_REGISTRY` 设为含命名空间的地址，默认值为 `ghcr.io/yusixian`。
 
@@ -39,7 +39,7 @@ openssl rand -hex 32
 
 ## 2. 创建环境文件
 
-二选一：
+任选一种方式：
 
 **方式 A：手动复制模板**
 
@@ -48,17 +48,21 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-**方式 B：用 Node.js 22.19+ 自动生成 Docker 专用 `.env`**（无需先装依赖，拒绝覆盖已有 `.env`）：
+**方式 B：用 Shell 自动生成 Docker 专用 `.env`**（需要 POSIX Shell、标准命令和 OpenSSL）：
 
 ```bash
-node scripts/init-env.mjs --email owner@example.com --url https://bot.example.com
+./scripts/init-env.sh --email owner@example.com --url https://bot.example.com
 ```
+
+已安装 Node.js 22.19+ 也可运行 `node scripts/init-env.mjs`，参数相同。两种脚本都拒绝覆盖已有 `.env`。
 
 替换为自己的邮箱和 HTTPS origin（本机试用可填 `http://localhost:43100`）。脚本会自动生成上述密钥并以 `0600` 权限写入（终端不回显，首次登录密码见 `.env` 中的 `PANEL_PASSWORD`），`DATABASE_URL` 留空以防误连开发库。
 
 无论哪种方式，所有环境都必须填非空 `ENCRYPTION_KEY`；升级或恢复已有数据时保留原值，切勿将 `.env` 提交进版本库或镜像。
 
 ## 3. 启动最小服务
+
+默认栈包含应用、数据库、启动前备份和语录渲染服务。部署多个实例时，为每个实例指定独立的 Compose 项目名。
 
 ```bash
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
@@ -85,11 +89,13 @@ curl -fsS http://127.0.0.1:43100/api/health
 curl -fsS http://127.0.0.1:43100/api/health/ready
 ```
 
-`43100` 来自 `.env.example` 的 `PORT`（未设时 `docker-compose.direct.yml` 默认映射宿主机 `9600`，容器内始终为 `3000`）。`/api/health` 仅检查进程存活，`/api/health/ready` 会校验迁移、认证、Bot 和必需集成均已就绪。
+直连部署默认映射宿主机 `43100`，容器内始终为 `3000`。如果升级时代理仍指向 `9600`，可在 `.env` 中设置 `PORT=9600`，或同步调整代理。`/api/health` 仅检查进程存活，`/api/health/ready` 会校验迁移、认证、Bot 和必需集成均已就绪。
 
 ## 5. 首次登录和启用选项
 
 访问 `BETTER_AUTH_URL`，用 owner 邮箱和 `PANEL_PASSWORD` 登录并在 Settings 修改密码，随后从 `.env` 删除 `PANEL_PASSWORD`，再在面板配置 Bot Token、Provider、备份和可选集成。
+
+需要自动判断图片是否加罩时，将 `nsfw` 加入 `COMPOSE_PROFILES`，再运行对应的 Compose 启动命令。分类器仅在 Compose 网络内提供服务。未启用或服务不可用时，Bot 会加罩发送图片。
 
 启用编码 worker：同时配置 `COMPOSE_PROFILES=coding` 与 `CODING_WORKER_SECRET` 后重建，确认 worker 与出口代理健康且未暴露公网。
 
