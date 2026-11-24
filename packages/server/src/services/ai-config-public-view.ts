@@ -49,11 +49,11 @@ export function toGitHubToolsConfigPublic(
     createIssueConfirmationTtlMinutes: stored.createIssueConfirmationTtlMinutes ?? null,
     codingProviderId: stored.codingProviderId,
     codingModelId: stored.codingModelId,
-    hasToken: !!stored.encryptedToken,
+    hasToken: !!stored.encryptedToken && !stored.githubAppInstallation,
     login: stored.githubAppInstallation?.accountLogin ?? stored.login,
     authorName: stored.authorName,
     authorEmail: stored.authorEmail,
-    repositories: stored.repositories,
+    repositories: stored.githubAppInstallation ? [] : stored.repositories,
   };
 }
 

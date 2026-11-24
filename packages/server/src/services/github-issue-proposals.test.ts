@@ -421,7 +421,7 @@ describe("current tenant authorization from database", () => {
     await expect(authorize(BOT, 7, "owner/repo")).rejects.toThrow("管理员");
     row.admins = [7];
     row.ai.githubToolsConfig.repositories = [];
-    await expect(authorize(BOT, 7, "owner/repo")).rejects.toThrow("白名单");
+    await expect(authorize(BOT, 7, "owner/repo")).rejects.toThrow("授权范围");
   });
   it("requires enabled tenant/config, App scope and available installation credentials; never falls back", async () => {
     const installation = {
@@ -440,7 +440,7 @@ describe("current tenant authorization from database", () => {
         enabled: true,
         githubToolsConfig: {
           ...config,
-          repositories: ["owner/repo", "outside/repo"],
+          repositories: ["outside/repo"],
           githubAppInstallation: installation,
           encryptedToken: encrypt("legacy", "key"),
         },
@@ -451,7 +451,7 @@ describe("current tenant authorization from database", () => {
     const authorize = createGitHubIssueProposalAuthorizer(database(row), "key", () => app);
     expect((await authorize(BOT, 7, "owner/repo")).token).toBe("app-current");
     expect(getInstallationToken).toHaveBeenCalledWith(9);
-    await expect(authorize(BOT, 7, "outside/repo")).rejects.toThrow("白名单");
+    await expect(authorize(BOT, 7, "outside/repo")).rejects.toThrow("授权范围");
     const unavailable = createGitHubIssueProposalAuthorizer(database(row), "key", () => undefined);
     await expect(unavailable(BOT, 7, "owner/repo")).rejects.toThrow("凭据");
     row.active = false;

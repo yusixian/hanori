@@ -227,12 +227,6 @@ export function githubAppCallbackRoutes(
           ) {
             throw new GitHubAppFlowError("GitHub App 连接已变更，请返回面板重新同步");
           }
-          const installedRepositories = new Set(
-            installation.repositories.map((repository) => repository.toLowerCase()),
-          );
-          const repositories = github.repositories.filter((repository) =>
-            installedRepositories.has(repository.toLowerCase()),
-          );
           const { encryptedToken: _legacyPat, ...withoutLegacyPat } = github;
           await db
             .update(bots)
@@ -242,7 +236,7 @@ export function githubAppCallbackRoutes(
                 githubToolsConfig: {
                   ...withoutLegacyPat,
                   login: installation.accountLogin,
-                  repositories,
+                  repositories: [],
                   githubAppInstallation: stored,
                 },
               },

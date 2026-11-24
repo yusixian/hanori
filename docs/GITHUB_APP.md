@@ -31,15 +31,15 @@ GitHub 必须能把浏览器重定向回这个地址；`localhost` 和服务器�
 
 按下面填写：
 
-| GitHub 字段                                            | 应填写的内容                                              |
-| ------------------------------------------------------ | --------------------------------------------------------- |
-| GitHub App name                                        | 自己能识别的唯一名称，例如 `cos-tool-bot-production`      |
-| Homepage URL                                           | `https://bot.example.com`，也就是完整的 `BETTER_AUTH_URL` |
-| Callback URL                                           | `https://bot.example.com/api/github-app/callback`         |
-| Request user authorization (OAuth) during installation | **不要勾选，保持关闭**                                    |
-| Setup URL                                              | `https://bot.example.com/api/github-app/setup`            |
-| Redirect on update                                     | 可以不勾选；仓库范围变化后在管理面板重新连接即可          |
-| Webhook / Active                                       | 取消勾选；当前版本不使用 GitHub Webhook                   |
+| GitHub 字段                                            | 应填写的内容                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------------ |
+| GitHub App name                                        | 自己能识别的唯一名称，例如 `cos-tool-bot-production`         |
+| Homepage URL                                           | `https://bot.example.com`，也就是完整的 `BETTER_AUTH_URL`    |
+| Callback URL                                           | `https://bot.example.com/api/github-app/callback`            |
+| Request user authorization (OAuth) during installation | **不要勾选，保持关闭**                                       |
+| Setup URL                                              | `https://bot.example.com/api/github-app/setup`               |
+| Redirect on update                                     | 可以不勾选；仓库范围变化后在管理面板点击「同步授权仓库」即可 |
+| Webhook / Active                                       | 取消勾选；当前版本不使用 GitHub Webhook                      |
 
 Setup URL 和 Callback URL 必须分别与下面两个地址完全一致，协议、域名、端口和路径都不能少：
 
@@ -189,7 +189,7 @@ GITHUB_APP_SLUG=填写Public link最后一段
 2. 打开对应 Bot 的 **AI 设置**：`/bots/<botId>/ai`。
 3. 在 **GitHub 工具**区域点击连接 GitHub。
 4. GitHub 页面会要求选择安装到个人账号或组织。
-5. 优先选择 **Only select repositories**，只勾选这个 Bot 真正需要操作的仓库；不要为了省事授权所有仓库。
+5. 选择 **All repositories** 授权该账号的全部仓库，或选择 **Only select repositories** 指定仓库。Bot 直接使用同步后的授权列表。
 6. 确认安装。GitHub 会先跳转到 `/api/github-app/setup`，服务端核对这次安装的 `installation_id`。
 7. 服务端随后会把浏览器带到 GitHub OAuth user authorization 页面；确认授权后，GitHub 再跳转到 `/api/github-app/callback`。
 8. Callback 验证当前管理员确实有权访问刚才的 installation，然后返回管理面板。
@@ -207,7 +207,7 @@ GitHub 会在安装页面显示 App 请求的权限和仓库范围。安装与�
 3. 再测试一次需要管理员确认的写操作，例如创建测试分支或 PR。
 4. 在 GitHub 仓库中确认操作主体、目标仓库和权限范围符合预期。
 
-如果后来在 GitHub 中增删了 installation 的仓库，需要回到面板断开并重新连接一次，刷新本 Bot 保存的仓库快照。
+如果后来在 GitHub 中增删了 installation 的仓库，需要回到面板点击「同步授权仓库」，刷新本 Bot 保存的仓库快照。
 
 服务器侧可以检查容器和日志，但不要输出 `.env`：
 

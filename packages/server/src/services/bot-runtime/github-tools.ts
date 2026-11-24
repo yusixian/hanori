@@ -2,7 +2,6 @@ import type { AiReplyBotConfig } from "@cos-tool-bot/bot";
 import type { GitHubToolsRuntimeConfig } from "@cos-tool-bot/shared";
 import type { AiConfigRuntime } from "../ai-config-runtime.js";
 import type { DbLogger } from "../db-logger.js";
-import { clampGitHubRepositories } from "../github-credential-policy.js";
 import type { BotRuntimeServices } from "./types.js";
 
 export function resolveGitHubToolsConfig(
@@ -17,7 +16,7 @@ export function resolveGitHubToolsConfig(
   const githubCredentialResolver =
     installation && services.githubAppCredentialService?.available
       ? () => services.githubAppCredentialService!.getInstallationToken(installation.installationId)
-      : legacyGitHubToken
+      : !installation && legacyGitHubToken
         ? async () => legacyGitHubToken
         : undefined;
   const githubToolsConfig = storedGitHubConfig
@@ -33,7 +32,7 @@ export function resolveGitHubToolsConfig(
         login: installation?.accountLogin ?? storedGitHubConfig.login,
         authorName: storedGitHubConfig.authorName,
         authorEmail: storedGitHubConfig.authorEmail,
-        repositories: clampGitHubRepositories(storedGitHubConfig.repositories, installation),
+        repositories: installation?.repositories ?? storedGitHubConfig.repositories,
         tokenProvider: githubCredentialResolver
           ? services.githubCredentialGenerations.capture(botId, githubCredentialResolver)
           : undefined,
@@ -42,15 +41,6 @@ export function resolveGitHubToolsConfig(
   if (aiRuntime.githubTokenDecryptFailed) {
     dbLogger.warn(
       "GitHub credential cannot be decrypted; private repository and write access disabled.",
-    );
-  }
-  if (
-    storedGitHubConfig &&
-    githubToolsConfig &&
-    githubToolsConfig.repositories.length !== storedGitHubConfig.repositories.length
-  ) {
-    dbLogger.warn(
-      "GitHub repository allowlist contained entries outside the installation snapshot; runtime access was clamped.",
     );
   }
   return githubToolsConfig;

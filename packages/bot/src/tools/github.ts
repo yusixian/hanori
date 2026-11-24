@@ -171,7 +171,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
   function writeClient(repository: string): GitHubClient {
     if (!options.isAdmin) throw new Error("Only bot administrators can change GitHub");
     if (!allowedRepositories.has(repository.toLowerCase())) {
-      throw new Error("Repository is not in the administrator-managed GitHub allowlist");
+      throw new Error("Repository is not in the bot's authorized GitHub repositories");
     }
     if (!authenticatedClient) throw new Error("The bot's GitHub token is not configured");
     return authenticatedClient;
@@ -207,7 +207,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
   const tools: Record<string, Tool> = {
     github_repository: tool({
       description:
-        "读取 GitHub 仓库基本信息。不要猜 owner/repo；指代不明或查找失败时，先用 github_list_repositories（可用时）和已有记忆/历史定位，仍不明确再询问用户。普通成员只能匿名读取公开仓库；管理员仅在白名单仓库可使用助手身份读取私有信息。",
+        "读取 GitHub 仓库基本信息。不要猜 owner/repo；指代不明或查找失败时，先用 github_list_repositories（可用时）和已有记忆/历史定位，仍不明确再询问用户。普通成员只能匿名读取公开仓库；管理员仅在授权仓库可使用助手身份读取私有信息。",
       inputSchema: zodToAiSchema(z.object({ repository: repositorySchema })),
       execute: async ({ repository }) => {
         try {
@@ -226,7 +226,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
               code: "repository_resolution_failed",
               repository,
               guidance: options.isAdmin
-                ? "Use github_list_repositories to inspect the configured allowlist, then check available memory/history for the exact repository. Do not guess owner aliases. Ask the user only if the evidence is still ambiguous. A 404 can also mean missing access."
+                ? "Use github_list_repositories to inspect the authorized repositories, then check available memory/history for the exact repository. Do not guess owner aliases. Ask the user only if the evidence is still ambiguous. A 404 can also mean missing access."
                 : "Check the exact repository in available memory/history or ask the user. A 404 can also mean the repository is private; anonymous access cannot verify it.",
             };
           }
@@ -312,7 +312,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
   if (options.isAdmin) {
     tools.github_list_repositories = tool({
       description:
-        "列出当前 Bot 的 GitHub 仓库白名单，仅管理员可用。用户提及仓库、Issue、PR 或‘你自己的仓库’但未给出 owner/repo 时先查此列表，并结合已有记忆/历史定位；不要盲猜 owner。列表只表示已配置，不保证远端访问成功；有歧义再询问用户。",
+        "列出当前 Bot 的 GitHub 授权仓库，仅管理员可用。用户提及仓库、Issue、PR 或‘你自己的仓库’但未给出 owner/repo 时先查此列表，并结合已有记忆/历史定位；不要盲猜 owner。列表只表示已配置，不保证远端访问成功；有歧义再询问用户。",
       inputSchema: zodToAiSchema(
         z.object({
           page: z.number().int().min(1).max(10_000).nullable().optional(),
@@ -330,7 +330,9 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
         const repositories = [...configured.values()];
         const offset = (currentPage - 1) * pageSize;
         return {
-          source: "configured_allowlist",
+          source: options.config.githubAppInstallation
+            ? "github_app_installation"
+            : "configured_allowlist",
           repositories: repositories.slice(offset, offset + pageSize),
           total: repositories.length,
           page: currentPage,
@@ -343,7 +345,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
     if (options.config.codingAgentEnabled && options.codeCallbacks && options.codingModel) {
       tools.github_code_task = tool({
         description:
-          "让隔离的 Pi coding agent 在白名单仓库创建或继续本地分支，修改代码、运行测试并创建本地 commit。只对管理员开放；不会推送到 GitHub。",
+          "让隔离的 Pi coding agent 在授权仓库创建或继续本地分支，修改代码、运行测试并创建本地 commit。只对管理员开放；不会推送到 GitHub。",
         inputSchema: zodToAiSchema(
           z.object({
             repository: repositorySchema,
@@ -426,7 +428,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
       ) {
         tools.github_inspect_workspace = tool({
           description:
-            "只读检查白名单仓库的本地 Pi workspace 是否干净，并列出未提交文件。不会读取或暴露被 Git 忽略的 .env、缓存等内容。只对管理员开放。",
+            "只读检查授权仓库的本地 Pi workspace 是否干净，并列出未提交文件。不会读取或暴露被 Git 忽略的 .env、缓存等内容。只对管理员开放。",
           inputSchema: zodToAiSchema(z.object({ repository: repositorySchema })),
           execute: async ({ repository }, execution: ToolExecutionOptions) => {
             try {
@@ -454,7 +456,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
 
         tools.github_resume_workspace = tool({
           description:
-            "提议让 Pi 从白名单仓库当前未提交 workspace 快照继续工作并创建本地 commit。工具会自行检查和绑定完整状态；实际执行前必须由发起管理员点击 Telegram 确认。",
+            "提议让 Pi 从授权仓库当前未提交 workspace 快照继续工作并创建本地 commit。工具会自行检查和绑定完整状态；实际执行前必须由发起管理员点击 Telegram 确认。",
           inputSchema: zodToAiSchema(
             z.object({
               repository: repositorySchema,
@@ -501,7 +503,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
 
         tools.github_discard_workspace = tool({
           description:
-            "提议丢弃白名单仓库当前未提交的 tracked 和非忽略 untracked 改动。工具会自行绑定完整状态；被 Git 忽略的 .env 和缓存会保留。实际执行前必须由发起管理员确认。",
+            "提议丢弃授权仓库当前未提交的 tracked 和非忽略 untracked 改动。工具会自行绑定完整状态；被 Git 忽略的 .env 和缓存会保留。实际执行前必须由发起管理员确认。",
           inputSchema: zodToAiSchema(z.object({ repository: repositorySchema })),
           execute: async ({ repository }, execution: ToolExecutionOptions) => {
             try {

@@ -604,29 +604,31 @@ export function GitHubToolsSection({
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium">{t("githubTools.repositories")}</label>
-        <Textarea
-          disabled={!config.enabled}
-          value={config.repositories.join("\n")}
-          onChange={(event) =>
-            onUpdate({
-              repositories: event.target.value
-                .split(/[,\n]/)
-                .map((value) => value.trim().toLowerCase())
-                .filter(Boolean),
-            })
-          }
-          placeholder={"owner/repository\nowner/private-repository"}
-          rows={5}
-        />
-        <p className="text-muted-foreground text-xs">{t("githubTools.repositoriesDescription")}</p>
-      </div>
-
-      <div className="bg-muted/40 rounded-md border p-3 text-xs">
-        <p className="font-medium">{t("githubTools.installationScopeTitle")}</p>
-        <p className="text-muted-foreground mt-1">{t("githubTools.installationScope")}</p>
-      </div>
+      {config.hasToken && (
+        <div className="space-y-1.5">
+          <label htmlFor="legacyGitHubRepositories" className="text-sm font-medium">
+            {t("githubTools.repositories")}
+          </label>
+          <Textarea
+            id="legacyGitHubRepositories"
+            disabled={!config.enabled}
+            value={config.repositories.join("\n")}
+            onChange={(event) =>
+              onUpdate({
+                repositories: event.target.value
+                  .split(/[,\n]/)
+                  .map((value) => value.trim().toLowerCase())
+                  .filter(Boolean),
+              })
+            }
+            placeholder={"owner/repository\nowner/private-repository"}
+            rows={5}
+          />
+          <p className="text-muted-foreground text-xs">
+            {t("githubTools.repositoriesDescription")}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

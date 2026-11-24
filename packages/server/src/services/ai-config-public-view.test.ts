@@ -156,7 +156,8 @@ describe("toAiConfigPublic", () => {
       model: "embed-a",
       dimensions: EMBEDDING_DIMENSIONS,
     });
-    expect(view.githubToolsConfig?.hasToken).toBe(true);
+    expect(view.githubToolsConfig?.hasToken).toBe(false);
+    expect(view.githubToolsConfig?.repositories).toEqual([]);
     expect(view.webToolsConfig?.search?.hasApiKey).toBe(true);
     expect(view.webToolsConfig?.imageGeneration?.hasApiKey).toBe(true);
     expect(view.engagement).toEqual({
