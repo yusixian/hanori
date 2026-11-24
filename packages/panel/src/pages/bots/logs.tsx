@@ -119,14 +119,14 @@ export function BotLogsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">{t("logs.title")}</h1>
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
           <Button
-            variant="destructive"
+            variant="ghost"
             size="sm"
-            className="shrink-0 whitespace-nowrap"
+            className="text-destructive shrink-0 whitespace-nowrap"
             onClick={clearLogs}
           >
             <Trash2 className="mr-1 h-3.5 w-3.5" />
@@ -152,7 +152,7 @@ export function BotLogsPage() {
 
       {/* Filters */}
       <div
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.2fr)_9rem_11rem_minmax(14rem,1fr)]"
+        className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.2fr)_9rem_11rem_minmax(14rem,1fr)]"
         data-testid="log-filters"
       >
         <div className="relative min-w-0">
@@ -226,7 +226,7 @@ export function BotLogsPage() {
 
       {/* Log list */}
       <Card>
-        <CardContent className="p-0">
+        <CardContent className="overflow-hidden rounded-[inherit] p-0 sm:p-0">
           {isLoading ? (
             <p className="text-muted-foreground p-6 text-sm">{t("common:common.loading")}</p>
           ) : isError ? (

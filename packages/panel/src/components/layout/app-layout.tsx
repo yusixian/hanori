@@ -748,9 +748,9 @@ function AppLayoutContent() {
         inert={isMobile && !sidebarOpen ? true : undefined}
         onClick={handleMobileNavigation}
         className={cn(
-          "hanori-sidebar fixed inset-y-0 left-0 z-50 flex w-[min(86vw,19rem)] flex-col overflow-hidden border-r border-border shadow-[14px_0_40px_rgb(82_35_64/0.08)] backdrop-blur-xl transition-[width,transform] duration-200 ease-out md:static md:z-auto md:translate-x-0 md:w-[248px] md:shadow-[8px_0_28px_rgb(82_35_64/0.025)]",
+          "hanori-sidebar fixed inset-y-0 left-0 z-50 flex w-[min(86vw,19rem)] flex-col overflow-hidden border-r border-border shadow-[14px_0_40px_rgb(82_35_64/0.08)] backdrop-blur-xl transition-[width,transform] duration-200 ease-out md:static md:z-auto md:translate-x-0 md:shadow-[8px_0_28px_rgb(82_35_64/0.025)]",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
-          collapsed ? "md:w-[68px]" : "md:w-[248px]",
+          collapsed ? "md:w-[68px]" : "md:w-[232px]",
         )}
       >
         <div className="sidebar-brand border-border flex min-h-20 shrink-0 items-center justify-between border-b px-4">

@@ -72,6 +72,18 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+test.each([true, false])(
+  "separates the desktop sidebar from the workspace (collapsed=%s)",
+  async (collapsed) => {
+    await renderLayout("/bots/test-id", collapsed);
+    const sidebar = document.getElementById("app-sidebar")!.getBoundingClientRect();
+    const main = document.getElementById("main-content")!.getBoundingClientRect();
+    expect(main.left - sidebar.right).toBeCloseTo(16, 0);
+    expect(sidebar.top).toBe(main.top);
+    expect(main.right).toBeLessThan(window.innerWidth);
+  },
+);
+
 test("groups Bot pages and searches Bot and global destinations in English and Chinese", async () => {
   await renderLayout();
 
