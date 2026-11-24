@@ -44,13 +44,13 @@ Hanori 是 pnpm monorepo 应用，包含 Telegram Bot、Hono 服务端、React �
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yusixian/hanori/main/scripts/install.sh -o install.sh &&
-  sh install.sh --email owner@example.com --url https://bot.example.com --tag v0.29.1-rc.1
+  sh install.sh --email owner@example.com --url https://bot.example.com --tag v0.29.1
 cd hanori
 docker compose -f docker-compose.prebuilt.yml up -d
 curl -fsS http://127.0.0.1:43100/api/health/ready
 ```
 
-示例使用已发布的候选镜像 `v0.29.1-rc.1`。安装其他版本时，将 `--tag` 换成 GHCR 上已发布的镜像标签。将邮箱和 HTTPS origin 换成自己的值。本机试用可省略 `--url`，默认使用 `http://localhost:43100`；默认端口在宿主机发布，试用时请用本机防火墙限制外部访问。用 `--dir` 指定其他目录，或同时设置 `--ref` 和 `--tag` 来使用与预构建镜像对应的 Git 标签及镜像标签；从已有源码目录安装可用 `--source-dir`。
+示例使用正式镜像 `v0.29.1`。安装其他版本时，将 `--tag` 换成 GHCR 上已发布的镜像标签。将邮箱和 HTTPS origin 换成自己的值。本机试用可省略 `--url`，默认使用 `http://localhost:43100`；默认端口在宿主机发布，试用时请用本机防火墙限制外部访问。用 `--dir` 指定其他目录，或同时设置 `--ref` 和 `--tag` 来使用与预构建镜像对应的 Git 标签及镜像标签；从已有源码目录安装可用 `--source-dir`。
 
 脚本以 `0600` 权限生成 `.env`，保留已有文件。首次登录密码见本机 `.env` 中的 `PANEL_PASSWORD`，登录并修改密码后可从环境中移除。
 
