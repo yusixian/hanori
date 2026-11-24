@@ -1,0 +1,16 @@
+bot.example.com {
+	# A public hostname enables automatic certificates and HTTP-to-HTTPS redirects.
+	reverse_proxy 127.0.0.1:43100 {
+		# Check process liveness. Probe /api/health/ready over HTTPS after deployment.
+		health_uri /api/health
+		health_interval 30s
+		health_timeout 3s
+	}
+
+	# Optional access logging. Redact sensitive query parameters before retaining logs.
+	# log
+
+	# Preserve Hanori's CSP and framing policy for Telegram Mini App.
+	# Optional HSTS once HTTPS works reliably on this hostname:
+	# header Strict-Transport-Security "max-age=31536000"
+}
