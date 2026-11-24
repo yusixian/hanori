@@ -24,6 +24,7 @@
     "docker:logs": "docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml logs -f app",
     "docker:prune": "docker image prune -f",
     "deploy:dokploy:check": "node scripts/check-dokploy-compose.mjs",
+    "deploy:env:check": "node scripts/check-env.mjs",
     "deployment:smoke": "node scripts/smoke-deployment.mjs",
     "setup:env": "node scripts/init-env.mjs",
     "upgrade:env": "node scripts/preserve-upgrade-env.mjs",

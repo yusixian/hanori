@@ -3,7 +3,7 @@ title: 配置说明
 description: 环境变量分类参考、密钥轮换规则与可选服务配置。
 ---
 
-复制 `.env.example` 为 `.env`（或在部署平台配置 Secret），将占位符替换为实际值。
+手动配置 Docker 实例时使用 `.env.selfhost.example`，源码开发与可选集成参考 `.env.example`。把密钥写入受保护的 `.env` 或部署平台 Secret。启动前可运行 `pnpm deploy:env:check`，源码开发使用 `pnpm deploy:env:check --mode local` 检查 `DATABASE_URL` 与通用配置。
 
 ## 数据库和服务
 
