@@ -9,10 +9,10 @@
 
 ## 快速部署（Docker）
 
-首次部署先生成环境配置与随机密钥，再用 Docker Compose 启动：
+首次部署用 POSIX Shell 和 OpenSSL 生成环境配置与随机密钥，再用 Docker Compose 启动：
 
 ```bash
-pnpm setup:env --email owner@example.com --url https://bot.example.com
+./scripts/init-env.sh --email owner@example.com --url https://bot.example.com
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
 curl -fsS http://localhost:43100/api/health/ready
 ```

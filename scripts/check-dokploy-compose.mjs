@@ -21,6 +21,7 @@ const requiredEnvironment = {
   MINI_APP_SESSION_SECRET: "",
   MEDIA_WORKER_SECRET: "validation-media-worker-secret-at-least-32-characters",
   TRAEFIK_DOCKER_NETWORK: process.env.TRAEFIK_DOCKER_NETWORK || "validation-proxy",
+  PORT: "",
   PANEL_PASSWORD: "validation-owner-password",
 };
 
@@ -55,14 +56,14 @@ const services = dokploy.services;
 assert(services.app, "Dokploy config is missing app");
 assert(services.db, "Dokploy config is missing db");
 assert(services["db-backup"], "Dokploy config is missing the database backup gate");
-assert(services["nsfw-api"], "Dokploy config is missing nsfw-api");
+assert(!services["nsfw-api"], "nsfw-api must stay behind the nsfw profile");
 assert(!services.app.ports, "Dokploy app must not publish a host port");
 assert(
   services.app.labels?.["traefik.docker.network"] === requiredEnvironment.TRAEFIK_DOCKER_NETWORK,
   "Dokploy app must pin Traefik to its shared network",
 );
 assert(!services.db.ports, "Dokploy database must not publish a host port");
-assert(!services["nsfw-api"].ports, "Dokploy nsfw-api must not publish a host port");
+
 assert(
   services.app.depends_on?.["db-backup"]?.condition === "service_completed_successfully",
   "app must wait for a successful verified database backup",
@@ -340,11 +341,19 @@ assert(
 );
 assert(harness.volumes?.lodyhome, "lody-bridge needs the persistent lodyhome volume");
 
+for (const files of [["docker-compose.yml"], ["docker-compose.yml", "docker-compose.direct.yml"]]) {
+  const classifier = renderConfig(files, "nsfw").services["nsfw-api"];
+  assert(
+    classifier && !classifier.ports?.length,
+    "nsfw profile must enable an internal classifier",
+  );
+}
 const direct = renderConfig(["docker-compose.yml", "docker-compose.direct.yml"]);
 assert(direct.services.app.ports?.length === 1, "legacy direct app port mapping is missing");
 assert(
-  direct.services["nsfw-api"].ports?.length === 1,
-  "legacy direct nsfw-api port mapping is missing",
+  direct.services.app.ports[0].published === "43100" &&
+    direct.services.app.ports[0].target === 3000,
+  "direct app must default to 43100:3000",
 );
 validateMedia(renderConfig(["docker-compose.yml", "docker-compose.direct.yml"], "media"));
 

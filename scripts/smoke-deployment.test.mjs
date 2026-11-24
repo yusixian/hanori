@@ -29,7 +29,6 @@ function isolatedConfig() {
       },
       db: {},
       "db-backup": {},
-      "nsfw-api": {},
       "quote-worker": { network_mode: "none" },
     },
     volumes: { botdata: { name: `${project}_botdata` } },
@@ -103,6 +102,9 @@ describe("disposable deployment safety", () => {
       config.services.app.environment.HARNESS_CONFIG_PATH = "/existing/config";
     },
     (config) => {
+      config.services["nsfw-api"] = {};
+    },
+    (config) => {
       config.services["coding-worker"] = {};
     },
     (config) => {
@@ -157,7 +159,7 @@ describe("deployment smoke failure handling", () => {
           const password = fs.readFileSync(envPath, 'utf8').match(/^DB_PASSWORD=(.*)$/m)[1];
           console.log(JSON.stringify({
             name: project,
-            services: { app: { labels: { 'traefik.enable': 'false' }, environment: { DATABASE_URL: 'postgresql://bot:' + password + '@db:5432/cos_tool_bot' } }, db: {}, 'db-backup': {}, 'nsfw-api': {}, 'quote-worker': { network_mode: 'none' } },
+            services: { app: { labels: { 'traefik.enable': 'false' }, environment: { DATABASE_URL: 'postgresql://bot:' + password + '@db:5432/cos_tool_bot' } }, db: {}, 'db-backup': {}, 'quote-worker': { network_mode: 'none' } },
             volumes: { pgdata: { name: project + '_pgdata' } },
             networks: { default: { name: project + '_default' } }
           }));

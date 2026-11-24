@@ -3,8 +3,4 @@
 services:
   app:
     ports:
-      - "${PORT:-9600}:3000"
-
-  nsfw-api:
-    ports:
-      - "${NSFW_API_PORT:-9601}:3000"
+      - "${PORT:-43100}:3000"

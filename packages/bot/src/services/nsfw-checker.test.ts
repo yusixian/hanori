@@ -49,6 +49,21 @@ describe("NsfwChecker", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the photo covered when the optional Compose service cannot be reached", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("getaddrinfo ENOTFOUND nsfw-api"));
+    vi.stubGlobal("fetch", fetchMock);
+    const checker = new NsfwChecker({ apiUrl: "http://nsfw-api:3000" });
+    const bytes = await sharp({ create: { width: 1, height: 1, channels: 3, background: "white" } })
+      .png()
+      .toBuffer();
+    await expect(checker.checkImageBytes(bytes)).resolves.toEqual({
+      status: "failed",
+      isNsfw: true,
+      scores: null,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("blocks a redirect to a metadata endpoint before fetching it", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(null, {
