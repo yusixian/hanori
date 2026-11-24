@@ -1,0 +1,481 @@
+services:
+  app:
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori:${HANORI_IMAGE_TAG:-latest}
+    ports:
+      - "${PORT:-43100}:3000"
+    expose:
+      - "3000"
+    # Dokploy attaches app to its public network alongside Compose's private networks.
+    # Pin Traefik to that network so it cannot select an unreachable backend IP.
+    labels:
+      - traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-dokploy-network}
+    environment:
+      - DATABASE_URL=postgresql://bot:${DB_PASSWORD}@db:5432/cos_tool_bot
+      - BOT_TOKEN=${BOT_TOKEN}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - AUTH_OWNER_EMAIL=${AUTH_OWNER_EMAIL}
+      - PANEL_PASSWORD=${PANEL_PASSWORD}
+      - MINI_APP_SESSION_SECRET=${MINI_APP_SESSION_SECRET:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
+      - GITHUB_APP_CLIENT_ID=${GITHUB_APP_CLIENT_ID:-}
+      - GITHUB_APP_CLIENT_SECRET=${GITHUB_APP_CLIENT_SECRET:-}
+      - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
+      - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:-}
+      - ADMIN_CHAT_IDS=${ADMIN_CHAT_IDS}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY before starting or upgrading}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-}
+      - RUNTIME_DIAGNOSTIC_RETENTION_MS=${RUNTIME_DIAGNOSTIC_RETENTION_MS:-3600000}
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
+      - LOG_RETENTION_DAYS_ERROR=${LOG_RETENTION_DAYS_ERROR:-90}
+      - LOG_CLEANUP_INTERVAL_HOURS=${LOG_CLEANUP_INTERVAL_HOURS:-24}
+      - GENERATION_RETENTION_DAYS=${GENERATION_RETENTION_DAYS:-30}
+      - BACKUP_DIR=/data/backups
+      - NSFW_API_URL=${NSFW_API_URL:-http://nsfw-api:3000}
+      - PIXAI_MCP_URL=${PIXAI_MCP_URL:-}
+      - PLUGIN_DIRECTORY=/app/data/plugins
+      - QUOTE_WORKER_SOCKET=/quote-control/worker.sock
+      - MEDIA_WORKER_SOCKET=/media-control/worker.sock
+      - MEDIA_WORKER_SECRET=${MEDIA_WORKER_SECRET:-}
+      - MEDIA_JOB_DIR=/media-jobs
+      - MEDIA_WORKER_GID=1000
+      - OPENAI_IMAGE_MCP_URL=${OPENAI_IMAGE_MCP_URL:-}
+      - GEMINI_IMAGE_MCP_URL=${GEMINI_IMAGE_MCP_URL:-}
+      - HARNESS_CONFIG_PATH=${HARNESS_CONFIG_PATH:-}
+      - HARNESS_GITHUB_WEBHOOK_SECRET=${HARNESS_GITHUB_WEBHOOK_SECRET:-}
+      - HARNESS_LODY_BRIDGE_URL=${HARNESS_LODY_BRIDGE_URL:-}
+      # Also verifies the bridge's signed turn-end callbacks (POST /api/harness/lody/turn).
+      - HARNESS_LODY_BRIDGE_SECRET=${HARNESS_LODY_BRIDGE_SECRET:-}
+      - CODING_WORKER_URL=
+      - CODING_WORKER_SOCKET=/coding-control/worker.sock
+      - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
+      - CODING_JOB_DIR=/coding-job
+      - CODING_WORKSPACES_DIR=/workspaces
+      - CODING_GIT_DIR=/git-metadata
+      - CODING_WORKSPACE_UID=1000
+      - CODING_WORKSPACE_GID=1000
+    volumes:
+      - backups:/data/backups
+      - botdata:/app/data
+      - codeworkspaces:/workspaces
+      - codegit:/git-metadata
+      - codingjob:/coding-job
+      - codingcontrol:/coding-control
+      - mediajobs:/media-jobs
+      - mediacontrol:/media-control
+      - quotecontrol:/quote-control
+    networks:
+      - default
+      - harness-bridge
+    depends_on:
+      quote-worker:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      db-backup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1024M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 15s
+
+  quote-worker:
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori-quote-worker:${HANORI_IMAGE_TAG:-latest}
+    environment:
+      - QUOTE_WORKER_SOCKET=/quote-control/worker.sock
+    volumes:
+      - quotecontrol:/quote-control
+    network_mode: none
+    read_only: true
+    user: "1000:1000"
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 512m
+    cpus: 1
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get({socketPath:'/quote-control/worker.sock',path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  media-worker:
+    profiles: ["media"]
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori-media-worker:${HANORI_IMAGE_TAG:-latest}
+    environment:
+      - MEDIA_WORKER_SECRET=${MEDIA_WORKER_SECRET:-}
+      - MEDIA_WORKER_SOCKET=/media-control/worker.sock
+      - MEDIA_JOB_DIR=/media-jobs
+    volumes:
+      - mediajobs:/media-jobs
+      - mediacontrol:/media-control
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 256m
+    cpus: 1
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get({socketPath:'/media-control/worker.sock',path:'/health',headers:{Authorization:'Bearer '+process.env.MEDIA_WORKER_SECRET}},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  coding-egress-proxy:
+    profiles: ["coding"]
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori-coding-egress-proxy:${HANORI_IMAGE_TAG:-latest}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - coding-sandbox
+      - coding-egress
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "printf 'GET http://127.0.0.1/ HTTP/1.0\\r\\n\\r\\n' | nc -w 2 127.0.0.1 3128 | grep -q '^HTTP/'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  coding-worker:
+    profiles: ["coding"]
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori-coding-worker:${HANORI_IMAGE_TAG:-latest}
+    environment:
+      - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
+      - CODING_WORKER_SOCKET=/coding-control/worker.sock
+      - CODING_JOB_ROOT=/job
+      - CODING_REQUIRE_PROXY=1
+      - HTTP_PROXY=http://coding-egress-proxy:3128
+      - HTTPS_PROXY=http://coding-egress-proxy:3128
+      - ALL_PROXY=http://coding-egress-proxy:3128
+      - NO_PROXY=
+      - http_proxy=http://coding-egress-proxy:3128
+      - https_proxy=http://coding-egress-proxy:3128
+      - all_proxy=http://coding-egress-proxy:3128
+      - no_proxy=
+      - npm_config_proxy=http://coding-egress-proxy:3128
+      - npm_config_https_proxy=http://coding-egress-proxy:3128
+    volumes:
+      - codingjob:/job
+      - codingcontrol:/coding-control
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    restart: always
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: 1.5
+    depends_on:
+      app:
+        condition: service_healthy
+      coding-egress-proxy:
+        condition: service_healthy
+    networks:
+      - coding-sandbox
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
+          pids: 128
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get({socketPath:'/coding-control/worker.sock',path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 20s
+
+  db-backup:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    environment:
+      - PGPASSWORD=${DB_PASSWORD}
+    volumes:
+      - backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        backup="/backups/cos_tool_bot_before_deploy_$$(date +%Y%m%d_%H%M%S).dump"
+        trap 'rm -f "$$backup"' EXIT
+        pg_dump -h db -U bot -d cos_tool_bot -Fc -f "$$backup"
+        test -s "$$backup"
+        pg_restore --list "$$backup" >/dev/null
+        trap - EXIT
+        printf 'Verified database backup: %s\n' "$$backup"
+    restart: "no"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  nsfw-api:
+    image: ${NSFW_API_IMAGE:-ghcr.io/arnidan/nsfw-api:latest}
+    expose:
+      - "3000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('node:http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  db:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    environment:
+      - POSTGRES_USER=bot
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=cos_tool_bot
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d cos_tool_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 768M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=192MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "effective_cache_size=384MB"
+      - "-c"
+      - "max_connections=50"
+      - "-c"
+      - "log_min_duration_statement=1000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    shm_size: "192mb"
+
+  # Runs allowlisted `lody` commands for the Dev Harness next to a local Lody daemon.
+  lody-bridge:
+    profiles: ["harness"]
+    image: ${HANORI_IMAGE_REGISTRY:-ghcr.io/yusixian}/hanori-lody-bridge:${HANORI_IMAGE_TAG:-latest}
+    init: true
+    environment:
+      - LODY_CLI_TOKEN=${LODY_CLI_TOKEN:-}
+      - HARNESS_LODY_BRIDGE_SECRET=${HARNESS_LODY_BRIDGE_SECRET:-}
+      - LODY_MACHINE_NAME=${LODY_MACHINE_NAME:-cos-tool-bot-server}
+      - LODY_DAEMON_WATCH_MS=${LODY_DAEMON_WATCH_MS:-60000}
+      - LODY_BRIDGE_PORT=43190
+      # Turn ends of `--wait` sessions are POSTed here, signed with HARNESS_LODY_BRIDGE_SECRET.
+      - HARNESS_LODY_CALLBACK_URL=${HARNESS_LODY_CALLBACK_URL:-http://app:3000/api/harness/lody/turn}
+      - LODY_BRIDGE_MAX_WAITERS=${LODY_BRIDGE_MAX_WAITERS:-8}
+    expose:
+      - "43190"
+    volumes:
+      - lodyhome:/home/node/.lody
+    networks:
+      - harness-bridge
+      - harness-egress
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: 1
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:43190/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 15s
+
+volumes:
+  pgdata:
+  backups:
+  botdata:
+  codeworkspaces:
+  codegit:
+  lodyhome:
+  mediajobs:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      # Only the server (UID 0) may replace job directories; the worker is UID 1000.
+      o: "size=268435456,uid=0,gid=0,mode=0755"
+  quotecontrol:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1048576,uid=0,gid=1000,mode=0770"
+  mediacontrol:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1048576,uid=0,gid=1000,mode=0770"
+  codingjob:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1073741824,uid=0,gid=0,mode=0711"
+  codingcontrol:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1048576,uid=0,gid=1000,mode=0770"
+
+networks:
+  coding-sandbox:
+    driver: bridge
+    internal: true
+  coding-egress:
+    driver: bridge
+    internal: false
+  # The app reaches the bridge only here; the bridge reaches Lody's cloud via harness-egress.
+  harness-bridge:
+    driver: bridge
+    internal: true
+  harness-egress:
+    driver: bridge
+    internal: false

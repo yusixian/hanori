@@ -3,6 +3,28 @@ title: Docker 部署
 description: 用 Docker Compose 启动服务、执行健康检查并安全更新实例。
 ---
 
+## 使用 GHCR 预构建镜像
+
+从已发布镜像对应的 Git 标签下载仓库根目录的 `docker-compose.prebuilt.yml` 和 `.env.example`，放在同一目录。参考第 1 节准备环境，按第 2 节的方式 A 创建 `.env`，将 `NSFW_API_URL` 设为 `http://nsfw-api:3000`。
+
+将 `HANORI_IMAGE_TAG` 设为完整版本标签（含 `v`），也可使用默认值 `latest`。使用其他镜像仓库时，将 `HANORI_IMAGE_REGISTRY` 设为含命名空间的地址，默认值为 `ghcr.io/yusixian`。
+
+```bash
+docker compose -f docker-compose.prebuilt.yml up -d
+curl -fsS http://127.0.0.1:43100/api/health/ready
+```
+
+宿主机默认端口为 `43100`，可通过 `PORT` 修改。升级前[备份数据](/docs/self-hosting/backup-upgrade)，下载目标版本的 Compose 文件，保留原项目目录和密钥，并更新已固定的 `HANORI_IMAGE_TAG`。
+
+```bash
+docker compose -f docker-compose.prebuilt.yml pull
+docker compose -f docker-compose.prebuilt.yml up -d
+```
+
+启动后确认 `/api/health/ready` 返回的 `version` 与目标提交的完整 Git SHA 一致。
+
+## 从源码构建
+
 获取对应版本的源码后，在仓库根目录执行以下步骤。
 
 ## 1. 准备环境
