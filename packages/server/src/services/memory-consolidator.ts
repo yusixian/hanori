@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createModelFetch } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import {
   botMemories,
@@ -21,7 +22,7 @@ import {
   DEFAULT_MEMORY_CONSOLIDATION_CONFIG,
   includesUnscopedPersonalMemories,
 } from "@cos-tool-bot/shared";
-import { generateText } from "ai";
+import { APICallError, generateText } from "ai";
 import {
   and,
   arrayOverlaps,
@@ -45,7 +46,7 @@ import { createBotEmbeddingService } from "./embedding-service.js";
 
 const INTERVAL_MS = 15 * 60_000;
 const LEASE_MS = 90_000;
-const MODEL_TIMEOUT_MS = 25_000;
+const EMBEDDING_TIMEOUT_MS = 25_000;
 const STABLE_AGE_MS = 5 * 60_000;
 const STALE_PENDING_AGE_MS = 24 * 60 * 60_000;
 const MAX_MESSAGES = 12;
@@ -457,6 +458,7 @@ export class MemoryConsolidator {
       config: AiConfigStored,
       prompt: string,
       encryptionKey: string,
+      signal: AbortSignal,
     ) => Promise<ModelResponse> = MemoryConsolidator.generate,
   ) {}
 
@@ -847,7 +849,7 @@ export class MemoryConsolidator {
     const candidateSources = permitted.filter((row) => !processed.has(row.id));
     if (!privacyModes || !candidateSources.length) {
       const cursor = batch.at(-1)!.id;
-      await this.advance(botId, owner, range ? null : after, cursor);
+      await this.renewLease(botId, owner, range ? null : { after, cursor });
       return cursor;
     }
     const personalSourceIds = new Set(
@@ -941,6 +943,12 @@ export class MemoryConsolidator {
     const accepted = fitted.accepted;
     const cursor = fitted.firstOverflow ? accepted.at(-1)!.id : batch.at(-1)!.id;
     const prompt = fitted.prompt!;
+    const timeoutMs =
+      1000 *
+      (bot.aiConfig.botMemoryConfig?.consolidation?.modelTimeoutSeconds ??
+        DEFAULT_MEMORY_CONSOLIDATION_CONFIG.modelTimeoutSeconds);
+    // Hold ownership through the model deadline without advancing the message cursor.
+    await this.renewLease(botId, owner, null, timeoutMs + LEASE_MS);
     const reservation = await this.usage.reserve({
       botId,
       resource: "ai_reply",
@@ -950,15 +958,30 @@ export class MemoryConsolidator {
     if (!reservation.allowed)
       throw new MemoryReviewError("Memory consolidation quota exhausted", 429);
     let response: ModelResponse;
+    const startedAt = Date.now();
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       stats.calls++;
-      response = await this.callModel(bot.aiConfig, prompt, this.encryptionKey);
+      response = await this.callModel(bot.aiConfig, prompt, this.encryptionKey, signal);
     } catch (error) {
+      const timedOut = signal.aborted;
+      this.logger.warn(
+        {
+          botId,
+          timedOut,
+          timeoutMs,
+          elapsedMs: Date.now() - startedAt,
+          errorType: error instanceof Error ? error.name : undefined,
+          statusCode: APICallError.isInstance(error) ? error.statusCode : undefined,
+        },
+        "Memory consolidation model call failed",
+      );
       await this.usage.refund({
         botId,
         resource: "ai_reply",
         reservationId: reservation.reservationId,
       });
+      if (timedOut) throw new MemoryReviewError("Consolidation model request timed out", 503);
       if (error instanceof MemoryReviewError) throw error;
       throw new MemoryReviewError("Consolidation model request failed", 503);
     }
@@ -1003,24 +1026,24 @@ export class MemoryConsolidator {
     return cursor;
   }
 
-  private async advance(
+  private async renewLease(
     botId: string,
     owner: string,
-    oldCursor: number | null,
-    cursor: number,
+    progress: { after: number; cursor: number } | null,
+    durationMs = LEASE_MS,
   ): Promise<void> {
     const result = await this.db
       .update(memoryConsolidationState)
       .set({
-        ...(oldCursor === null ? {} : { cursorMessageId: cursor }),
+        ...(progress && { cursorMessageId: progress.cursor }),
         updatedAt: new Date(),
-        leaseUntil: new Date(Date.now() + LEASE_MS),
+        leaseUntil: new Date(Date.now() + durationMs),
       })
       .where(
         and(
           eq(memoryConsolidationState.botId, botId),
           eq(memoryConsolidationState.leaseOwner, owner),
-          oldCursor === null ? undefined : eq(memoryConsolidationState.cursorMessageId, oldCursor),
+          progress ? eq(memoryConsolidationState.cursorMessageId, progress.after) : undefined,
           gt(memoryConsolidationState.leaseUntil, new Date()),
         ),
       )
@@ -1290,7 +1313,7 @@ export class MemoryConsolidator {
       return { memories: contentWrites, aiConfig: bot.aiConfig, changes };
     });
     await this.memoryWriter.refreshEmbeddings(botId, committed.memories, {
-      embeddingTimeoutMs: MODEL_TIMEOUT_MS,
+      embeddingTimeoutMs: EMBEDDING_TIMEOUT_MS,
       fallbackEmbedder: () =>
         createBotEmbeddingService(
           toAiConfigRuntime(committed.aiConfig, this.encryptionKey),
@@ -1300,24 +1323,30 @@ export class MemoryConsolidator {
     return committed.changes;
   }
 
-  private static async generate(config: AiConfigStored, prompt: string, encryptionKey: string) {
+  private static async generate(
+    config: AiConfigStored,
+    prompt: string,
+    encryptionKey: string,
+    signal: AbortSignal,
+  ) {
     const { provider, modelId } = resolveConsolidationModel(
       config,
       toAiConfigRuntime(config, encryptionKey),
     );
+    const settings = {
+      baseURL: provider.baseURL,
+      apiKey: provider.apiKey,
+      fetch: createModelFetch(),
+    };
     const factory =
       provider.providerFormat === "gemini"
-        ? createGoogleGenerativeAI({ baseURL: provider.baseURL, apiKey: provider.apiKey })
-        : createOpenAICompatible({
-            name: "custom",
-            baseURL: provider.baseURL,
-            apiKey: provider.apiKey,
-          });
+        ? createGoogleGenerativeAI(settings)
+        : createOpenAICompatible({ ...settings, name: "custom" });
     const result = await generateText({
       model: factory(modelId),
       maxRetries: 0,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
-      abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+      abortSignal: signal,
       messages: [{ role: "user", content: prompt }],
     });
     return {

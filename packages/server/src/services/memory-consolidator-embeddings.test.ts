@@ -106,7 +106,7 @@ function consolidationDb(transactionSource: typeof source, aiConfig: Record<stri
     if (query.table === bots) {
       return [{ id: botId, isActive: true, aiConfig }];
     }
-    if (query.table === memoryConsolidationState) return query.op === "update" ? [] : [lease];
+    if (query.table === memoryConsolidationState) return [lease];
     if (query.table === conversationMessages) {
       if (query.inTransaction) return [transactionSource];
       if (lastRead) return [];
@@ -183,6 +183,7 @@ function consolidate(
   options: {
     transactionSource?: typeof source;
     runningEmbedder?: boolean;
+    modelTimeoutSeconds?: number;
     embeddingConfig?: Record<string, unknown>;
   } = {},
 ) {
@@ -191,7 +192,10 @@ function consolidate(
     encryptedApiKey: null,
     baseURL: "",
     model: "",
-    botMemoryConfig: { enabled: true },
+    botMemoryConfig: {
+      enabled: true,
+      consolidation: { modelTimeoutSeconds: options.modelTimeoutSeconds },
+    },
     ...(options.embeddingConfig ? { embeddingConfig: options.embeddingConfig } : {}),
   };
   const { db, events, releaseLease, beforeTransaction } = consolidationDb(
@@ -256,6 +260,35 @@ beforeEach(() => {
 });
 
 describe("memory consolidation embeddings", () => {
+  it.each([
+    [undefined, 120000],
+    [300, 300000],
+  ])(
+    "uses the configured model deadline and refunds timed out calls (%s)",
+    async (modelTimeoutSeconds, timeoutMs) => {
+      const { run, usage, callModel, logger } = consolidate({ modelTimeoutSeconds });
+      const controller = new AbortController();
+      const deadline = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+      try {
+        callModel.mockImplementationOnce(async () => {
+          controller.abort();
+          throw new Error("request aborted");
+        });
+        await run();
+        expect(deadline).toHaveBeenCalledWith(timeoutMs);
+        expect(callModel.mock.calls[0]).toContain(controller.signal);
+        expect(usage.refund).toHaveBeenCalledOnce();
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            error: expect.objectContaining({ message: "Consolidation model request timed out" }),
+          }),
+          "Memory consolidation failed",
+        );
+      } finally {
+        deadline.mockRestore();
+      }
+    },
+  );
   it("embeds created and rewritten memories only after the batch commits", async () => {
     const { run, events, store, embedder, logger } = consolidate();
 

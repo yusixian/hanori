@@ -142,6 +142,7 @@ export interface BotMemory {
 export interface MemoryConsolidationConfig {
   enabled?: boolean;
   intervalHours?: number;
+  modelTimeoutSeconds?: number;
   maxCallsPerRun?: number;
   groupImpressions?: boolean;
   retentionDays?: number;
@@ -153,6 +154,7 @@ export const DEFAULT_MEMORY_CONSOLIDATION_CONFIG = {
   enabled: true,
   groupImpressions: true,
   intervalHours: 12,
+  modelTimeoutSeconds: 120,
   maxCallsPerRun: 4,
 } as const satisfies MemoryConsolidationConfig;
 
