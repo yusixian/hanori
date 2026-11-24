@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createModelFetch } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import {
   botMemories,
@@ -1332,14 +1333,15 @@ export class MemoryConsolidator {
       config,
       toAiConfigRuntime(config, encryptionKey),
     );
+    const settings = {
+      baseURL: provider.baseURL,
+      apiKey: provider.apiKey,
+      fetch: createModelFetch(),
+    };
     const factory =
       provider.providerFormat === "gemini"
-        ? createGoogleGenerativeAI({ baseURL: provider.baseURL, apiKey: provider.apiKey })
-        : createOpenAICompatible({
-            name: "custom",
-            baseURL: provider.baseURL,
-            apiKey: provider.apiKey,
-          });
+        ? createGoogleGenerativeAI(settings)
+        : createOpenAICompatible({ ...settings, name: "custom" });
     const result = await generateText({
       model: factory(modelId),
       maxRetries: 0,
