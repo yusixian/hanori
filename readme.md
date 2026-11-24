@@ -24,7 +24,7 @@ curl -fsS http://localhost:43100/api/health/ready
 
 本地试跑可以把 `--url` 改成 `http://localhost:43100`。后续更新直接跑 `./scripts/update-production.sh`（自动备份、重建并做健康检查）；如果自定义过 Compose 项目名，记得先设置 `DEPLOY_PROJECT_NAME`。
 
-反代配置（含 Dokploy）、备份恢复与版本升级见 [Docker 部署](packages/docs/content/docs/self-hosting/docker.mdx) 和 [备份与升级](packages/docs/content/docs/self-hosting/backup-upgrade.mdx)。需要跑完整启动/恢复冒烟检查时，可使用 `pnpm deployment:smoke`。
+预构建镜像的一键安装和平台模板见[自托管总览](packages/docs/content/docs/self-hosting/index.mdx)。反代配置、备份恢复与版本升级见 [Docker 部署](packages/docs/content/docs/self-hosting/docker.mdx) 和 [备份与升级](packages/docs/content/docs/self-hosting/backup-upgrade.mdx)。需要跑完整启动/恢复冒烟检查时，可使用 `pnpm deployment:smoke`。
 
 ## 本地开发
 
