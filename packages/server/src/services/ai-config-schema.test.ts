@@ -109,6 +109,7 @@ describe("memory consolidation settings", () => {
       enabled: true,
       intervalHours: 12,
       maxCallsPerRun: 4,
+      modelTimeoutSeconds: 300,
       retentionDays: 180,
       groupImpressions: true,
       providerId: "cheap-provider",
@@ -122,6 +123,9 @@ describe("memory consolidation settings", () => {
   it.each([
     { intervalHours: 0 },
     { maxCallsPerRun: 33 },
+    { modelTimeoutSeconds: 9 },
+    { modelTimeoutSeconds: 601 },
+    { modelTimeoutSeconds: 20.5 },
     { retentionDays: -1 },
     { providerId: "   " },
   ])("rejects invalid limits or model settings %j", (consolidation) => {

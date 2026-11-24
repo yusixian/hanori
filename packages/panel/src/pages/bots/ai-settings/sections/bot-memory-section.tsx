@@ -111,6 +111,20 @@ export function BotMemorySection({
                   />
                 </label>
                 <label className="space-y-1 text-sm">
+                  {t("review.timeout")}
+                  <Input
+                    type="number"
+                    min={10}
+                    max={600}
+                    value={consolidation.modelTimeoutSeconds}
+                    onChange={(e) =>
+                      updateReview({
+                        modelTimeoutSeconds: e.target.value ? Number(e.target.value) : undefined,
+                      })
+                    }
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
                   {t("review.callLimit")}
                   <Input
                     type="number"

@@ -294,6 +294,7 @@ export const aiConfigSchema = z
           .object({
             enabled: z.boolean().optional(),
             intervalHours: z.number().int().min(1).max(168).optional(),
+            modelTimeoutSeconds: z.number().int().min(10).max(600).optional(),
             maxCallsPerRun: z.number().int().min(1).max(32).optional(),
             groupImpressions: z.boolean().optional(),
             retentionDays: z.number().int().min(1).max(365).optional(),
