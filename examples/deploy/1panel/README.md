@@ -3,7 +3,7 @@
 此模板使用 GHCR 预构建镜像。OpenResty 通过宿主机回环地址访问 `app`，数据库、备份和渲染服务均未发布宿主机端口。
 
 1. 将本目录的 `docker-compose.yml` 放到服务器的部署目录。从[环境模板](../../../.env.selfhost.example)准备同目录下的 `.env`，设置文件权限为 `0600`。如镜像受访问控制，先为部署服务器配置镜像仓库认证。
-2. 填写 `AUTH_OWNER_EMAIL` 和公开 HTTPS origin `BETTER_AUTH_URL`。使用 `openssl rand -hex 32` 分别生成 `DB_PASSWORD`、`BETTER_AUTH_SECRET`、`ENCRYPTION_KEY`、`MINI_APP_SESSION_SECRET` 和首次登录用的 `PANEL_PASSWORD`。`HANORI_IMAGE_TAG` 可固定到对应的已发布标签（含 `v`），默认 `latest`。
+2. 填写 `AUTH_OWNER_EMAIL` 和公开 HTTPS origin `BETTER_AUTH_URL`。使用 `openssl rand -hex 32` 分别生成 `DB_PASSWORD`、`BETTER_AUTH_SECRET`、`ENCRYPTION_KEY`、`MINI_APP_SESSION_SECRET` 和首次登录用的 `PANEL_PASSWORD`。将 `HANORI_IMAGE_TAG` 设为已发布的镜像标签，例如候选版 `v0.29.1-rc.1`。
 3. 在 **容器 → 编排 → 创建编排** 选择从路径导入，填写部署目录中 Compose 文件的绝对路径，在同一项目中保留 `.env`。启动后确认 `db-backup` 退出码为 0、`quote-worker` 和 `app` 均健康。也可在该目录执行：
 
    ```sh
