@@ -84,8 +84,8 @@
 
 .mini-app-content {
   width: 100%;
-  padding: clamp(1.2rem, 4vw, 2.2rem);
-  padding-bottom: 2.4rem;
+  padding: clamp(1rem, 3vw, 1.5rem);
+  padding-bottom: 2rem;
 }
 
 .mini-app-help {

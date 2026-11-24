@@ -355,10 +355,10 @@ function BotGenerationDetailContent({
         {t("generations.backToArchive")}
       </Link>
 
-      <header className="hanori-section-banner relative overflow-hidden rounded-2xl border p-6 shadow-sm sm:p-8">
+      <header className="hanori-section-banner relative overflow-hidden rounded-2xl border p-4 shadow-sm sm:px-5">
         <div className="bg-lilac-foreground/15 pointer-events-none absolute -top-20 left-1/3 h-48 w-80 rounded-full blur-3xl" />
-        <div className="relative grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
-          <div className="space-y-4">
+        <div className="relative grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+          <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={detail.legacy ? "muted" : "success"}>
                 {detail.legacy ? t("generations.legacyBadge") : t("generations.unifiedBadge")}
@@ -432,34 +432,34 @@ function BotGenerationDetailContent({
         </p>
       ) : null}
 
-      {images.length > 0 ? (
-        <Card className="overflow-hidden">
-          <GenerationGallery
-            images={images}
-            scores={detail.nsfwScores}
-            aspectRatio={
-              snapshot.width && snapshot.height
-                ? `${snapshot.width} / ${snapshot.height}`
-                : undefined
-            }
-          />
-        </Card>
-      ) : detail.filesPurgedAt ? (
-        <Card className="border-warning-border bg-warning-soft/60">
-          <CardContent className="text-warning flex gap-3 pt-5 sm:pt-6">
-            <FileWarning className="mt-0.5 size-5 shrink-0" />
-            <div>
-              <p className="font-semibold">{t("generations.originalPurged")}</p>
-              <p className="text-warning mt-1 text-sm leading-6">
-                {t("generations.metadataRetained")}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.75fr)]">
+        <div className="min-w-0 space-y-4">
+          {images.length > 0 ? (
+            <Card className="overflow-hidden">
+              <GenerationGallery
+                images={images}
+                scores={detail.nsfwScores}
+                aspectRatio={
+                  snapshot.width && snapshot.height
+                    ? `${snapshot.width} / ${snapshot.height}`
+                    : undefined
+                }
+              />
+            </Card>
+          ) : detail.filesPurgedAt ? (
+            <Card className="border-warning-border bg-warning-soft/60">
+              <CardContent className="text-warning flex gap-3 pt-5 sm:pt-6">
+                <FileWarning className="mt-0.5 size-5 shrink-0" />
+                <div>
+                  <p className="font-semibold">{t("generations.originalPurged")}</p>
+                  <p className="text-warning mt-1 text-sm leading-6">
+                    {t("generations.metadataRetained")}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.75fr)]">
-        <div className="space-y-6">
           <PromptCard
             title={t("generations.prompt")}
             value={detail.prompt}

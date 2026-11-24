@@ -76,7 +76,9 @@ export function LogEntryRow({
   live?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const correlations = correlationEntries(log.meta as LogMeta);
+  const meta = log.meta as LogMeta;
+  const correlations = correlationEntries(meta);
+  const toolName = typeof meta?.toolName === "string" ? meta.toolName : undefined;
 
   const copyJson = async () => {
     try {
@@ -91,23 +93,26 @@ export function LogEntryRow({
   return (
     <article className={live ? "bg-accent/50" : undefined} data-log-id={log.id}>
       <details className="group">
-        <summary className="focus-visible:ring-ring cursor-pointer list-none px-4 py-3.5 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 sm:flex sm:gap-3">
+        <summary className="focus-visible:ring-ring @container cursor-pointer list-none px-4 py-2 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
+          <div className="log-summary grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 sm:flex sm:gap-3">
             <Badge
               variant={levelBadge[log.level] ?? "muted"}
               className="col-start-1 row-start-1 mt-0.5 shrink-0 justify-self-start uppercase"
             >
               {log.level}
             </Badge>
-            <div className="col-span-2 row-start-2 min-w-0 space-y-2 sm:col-auto sm:row-auto sm:flex-1">
+            <div className="log-description col-span-2 row-start-2 min-w-0 space-y-1 sm:col-auto sm:row-auto sm:flex-1">
               <p className="text-foreground font-mono text-sm leading-5 break-words whitespace-pre-wrap">
                 {log.message}
               </p>
-              <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px]">
+              <span className="log-tool hidden truncate font-mono text-xs" title={toolName}>
+                {toolName}
+              </span>
+              <div className="log-context text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px]">
                 <time dateTime={log.createdAt}>{formatTime(log.createdAt, locale)}</time>
-                {showBotId && log.botId && <span>botId: {log.botId}</span>}
+                {showBotId && log.botId && <span title={log.botId}>botId: {log.botId}</span>}
                 {correlations.map(([key, value]) => (
-                  <span key={key} className="max-w-full break-all">
+                  <span key={key} data-field={key} title={value} className="max-w-full break-all">
                     {key}: {value}
                   </span>
                 ))}
